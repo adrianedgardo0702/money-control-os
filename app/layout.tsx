@@ -1,0 +1,15 @@
+import type {Metadata} from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Money Control OS',
+  description: 'App privada para controlar negocios, cuentas, gastos, deudas y reportes financieros.',
+};
+
+export default function RootLayout({children}: {children: React.ReactNode}) {
+  return (
+    <html lang="es">
+      <body className="font-sans antialiased bg-background text-foreground" suppressHydrationWarning>{children}</body>
+    </html>
+  );
+}
