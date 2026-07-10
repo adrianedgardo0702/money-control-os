@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Building2, Smartphone, Banknote, Wallet, ArrowRightLeft, Plus, MapPin, X, Pencil } from 'lucide-react';
+import { Building2, Smartphone, Banknote, Wallet, ArrowRightLeft, Plus, MapPin, X, Pencil, RefreshCcw } from 'lucide-react';
 import { TransferModal } from './TransferModal';
 import { showToast } from '@/lib/toast';
 
@@ -20,13 +20,14 @@ const initialAccountForm = {
 };
 
 export function AccountsModule() {
-  const { accounts, businesses, protectedFunds, createAccount, updateAccount, transferFunds } = useStore();
+  const { accounts, businesses, protectedFunds, user, lastSyncedAt, dataError, createAccount, updateAccount, transferFunds, fetchInitialData } = useStore();
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState(initialAccountForm);
   const [accountError, setAccountError] = useState('');
   const [isSavingAccount, setIsSavingAccount] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const totalMoney = accounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const totalBancos = accounts.filter((account) => account.type === 'Banco' || account.type === 'Cuenta personal').reduce((sum, account) => sum + Number(account.current_balance), 0);
@@ -37,6 +38,8 @@ export function AccountsModule() {
   const committedMoney = protectedFunds.filter((fund) => fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
   const freeMoney = totalMoney - committedMoney;
   const cashAccounts = accounts.filter((account) => account.type === 'Efectivo' || account.type === 'Caja negocio');
+  const syncLabel = lastSyncedAt ? new Intl.DateTimeFormat('es-PA', { hour: '2-digit', minute: '2-digit' }).format(new Date(lastSyncedAt)) : 'sin actualizar';
+  const sessionLabel = user?.email || (user?.id ? `usuario ${user.id.slice(0, 8)}` : 'sin sesion');
 
   const getAccountIcon = (type: AccountType) => {
     switch (type) {
@@ -132,14 +135,36 @@ export function AccountsModule() {
     showToast({ type: 'success', title: 'Transferencia guardada', description: 'Los saldos fueron actualizados.' });
   };
 
+  const handleRefreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchInitialData();
+      const refreshedError = useStore.getState().dataError;
+      if (refreshedError) {
+        showToast({ type: 'error', title: 'No se pudieron actualizar los datos', description: refreshedError });
+      } else {
+        showToast({ type: 'success', title: 'Datos actualizados', description: 'La PC volvio a consultar Supabase.' });
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-display font-bold tracking-tight md:text-3xl">Cuentas y Bolsillos</h2>
           <p className="text-muted-foreground mt-1">Controla donde esta tu dinero realmente y gestiona transferencias.</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Sesion: {sessionLabel} - Actualizado: {syncLabel}
+          </p>
+          {dataError && <p className="mt-1 text-xs font-medium text-destructive">{dataError}</p>}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button variant="outline" onClick={handleRefreshData} disabled={isRefreshing} className="w-full sm:w-auto">
+            <RefreshCcw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} /> Actualizar datos
+          </Button>
           <Button onClick={() => setIsTransferModalOpen(true)} className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto">
             <ArrowRightLeft className="w-4 h-4 mr-2" /> Transferir dinero
           </Button>

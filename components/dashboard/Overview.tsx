@@ -1,9 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { ArrowUpRight, ArrowDownRight, Activity, Wallet, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ArrowUpRight, ArrowDownRight, Activity, Wallet, AlertCircle, RefreshCcw } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useStore } from '@/store/useStore';
+import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -29,7 +32,8 @@ const buildWeeklyChart = (transactions: { type: string; amount: number; date: st
 };
 
 export function Overview() {
-  const { accounts, transactions, protectedFunds, debts, businesses } = useStore();
+  const { accounts, transactions, protectedFunds, debts, businesses, user, lastSyncedAt, dataError, fetchInitialData } = useStore();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const totalMoney = accounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const protectedMoney = protectedFunds.filter((fund) => fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
   const safeFreeMoney = totalMoney - protectedMoney;
@@ -50,18 +54,44 @@ export function Overview() {
       return { name: business.name, profit: income - expense };
     })
     .sort((a, b) => b.profit - a.profit)[0];
+  const syncLabel = lastSyncedAt ? new Intl.DateTimeFormat('es-PA', { hour: '2-digit', minute: '2-digit' }).format(new Date(lastSyncedAt)) : 'sin actualizar';
+  const sessionLabel = user?.email || (user?.id ? `usuario ${user.id.slice(0, 8)}` : 'sin sesion');
+
+  const handleRefreshData = async () => {
+    setIsRefreshing(true);
+    try {
+      await fetchInitialData();
+      const refreshedError = useStore.getState().dataError;
+      if (refreshedError) {
+        showToast({ type: 'error', title: 'No se pudieron actualizar los datos', description: refreshedError });
+      } else {
+        showToast({ type: 'success', title: 'Datos actualizados', description: 'Se consulto nuevamente Supabase.' });
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h2 className="text-2xl font-display font-bold tracking-tight md:text-3xl">Dashboard General</h2>
           <p className="text-muted-foreground mt-1">Resumen de tu flujo de caja y salud financiera.</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Sesion: {sessionLabel} - Actualizado: {syncLabel}
+          </p>
+          {dataError && <p className="mt-1 text-xs font-medium text-destructive">{dataError}</p>}
         </div>
-        <div className="grid w-full grid-cols-3 gap-2 text-left md:w-auto md:gap-6 md:text-right">
-          <HeaderMetric label="Dinero total" value={money(totalMoney)} />
-          <HeaderMetric label="Dinero No Tocar" value={money(protectedMoney)} className="text-destructive" />
-          <HeaderMetric label="Libre seguro" value={money(safeFreeMoney)} className="text-success" large />
+        <div className="flex w-full flex-col gap-3 md:w-auto md:items-end">
+          <Button variant="outline" onClick={handleRefreshData} disabled={isRefreshing} className="w-full md:w-auto">
+            <RefreshCcw className={`mr-2 h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} /> Actualizar datos
+          </Button>
+          <div className="grid w-full grid-cols-3 gap-2 text-left md:w-auto md:gap-6 md:text-right">
+            <HeaderMetric label="Dinero total" value={money(totalMoney)} />
+            <HeaderMetric label="Dinero No Tocar" value={money(protectedMoney)} className="text-destructive" />
+            <HeaderMetric label="Libre seguro" value={money(safeFreeMoney)} className="text-success" large />
+          </div>
         </div>
       </div>
 

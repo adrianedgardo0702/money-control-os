@@ -96,6 +96,8 @@ type AppState = {
   businesses: Business[];
   isLoading: boolean;
   isPreviewMode: boolean;
+  lastSyncedAt: string | null;
+  dataError: string | null;
   activeBusinessId: string | 'all' | 'personal';
   accounts: Account[];
   transactions: Transaction[];
@@ -223,6 +225,8 @@ export const useStore = create<AppState>((set, get) => ({
   businesses: [],
   isLoading: true,
   isPreviewMode: false,
+  lastSyncedAt: null,
+  dataError: null,
   activeBusinessId: 'all',
   setActiveBusinessId: (id) => set({ activeBusinessId: id }),
   accounts: [],
@@ -234,11 +238,12 @@ export const useStore = create<AppState>((set, get) => ({
   setAccounts: (accounts) => set({ accounts }),
   fetchInitialData: async () => {
     if (!hasSupabaseConfig || !supabase) {
-      set({ isLoading: false });
+      set({ isLoading: false, dataError: 'Supabase no esta configurado.' });
       return;
     }
 
     try {
+      set({ dataError: null });
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
         set({ user: { id: session.user.id, email: session.user.email || '' } });
@@ -270,7 +275,9 @@ export const useStore = create<AppState>((set, get) => ({
           transactions: transactions || [],
           protectedFunds: protectedFunds || [],
           recurringExpenses: recurringExpenses || [],
-          debts: debts || []
+          debts: debts || [],
+          lastSyncedAt: new Date().toISOString(),
+          dataError: null
         });
       } else {
         set({
@@ -280,11 +287,15 @@ export const useStore = create<AppState>((set, get) => ({
           transactions: [],
           protectedFunds: [],
           recurringExpenses: [],
-          debts: []
+          debts: [],
+          lastSyncedAt: new Date().toISOString(),
+          dataError: null
         });
       }
     } catch (error) {
-      console.error('Error fetching initial data:', getErrorMessage(error));
+      const message = getErrorMessage(error);
+      console.error('Error fetching initial data:', message);
+      set({ dataError: message, lastSyncedAt: new Date().toISOString() });
     } finally {
       set({ isLoading: false });
     }
@@ -292,7 +303,7 @@ export const useStore = create<AppState>((set, get) => ({
   signOut: async () => {
     if (supabase) {
       await supabase.auth.signOut();
-      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [] });
+      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], lastSyncedAt: null, dataError: null });
     }
   },
   createBusiness: async (input) => {
