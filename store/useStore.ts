@@ -117,6 +117,15 @@ type AppState = {
     business_id?: string;
     status?: string;
   }) => Promise<Account>;
+  updateAccount: (id: string, input: {
+    name: string;
+    type: string;
+    bank_name?: string;
+    current_balance: number;
+    is_personal: boolean;
+    business_id?: string;
+    status?: string;
+  }) => Promise<Account>;
   createTransaction: (input: {
     type: 'ingreso' | 'gasto';
     scope: 'personal' | 'negocio';
@@ -333,6 +342,39 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) throw new Error(getErrorMessage(error));
     const account = data as Account;
     set({ accounts: [...get().accounts, account] });
+    await get().fetchInitialData();
+    return account;
+  },
+  updateAccount: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    if (!name) throw new Error('El nombre de la cuenta es obligatorio.');
+    if (!input.type) throw new Error('Selecciona el tipo de cuenta.');
+    if (!input.is_personal && !input.business_id) throw new Error('Selecciona el negocio de esta cuenta.');
+
+    const currentBalance = Number(input.current_balance);
+    if (!Number.isFinite(currentBalance)) throw new Error('El saldo no es válido.');
+
+    const { data, error } = await client
+      .from('accounts')
+      .update({
+        name,
+        type: input.type,
+        bank_name: input.bank_name?.trim() || null,
+        current_balance: currentBalance,
+        is_personal: input.is_personal,
+        business_id: input.is_personal ? null : input.business_id || null,
+        status: input.status || 'active'
+      })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(getErrorMessage(error));
+    const account = data as Account;
+    set({ accounts: get().accounts.map((item) => item.id === id ? account : item) });
     await get().fetchInitialData();
     return account;
   },

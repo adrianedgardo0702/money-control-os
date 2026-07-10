@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Building2, Smartphone, Banknote, Wallet, ArrowRightLeft, Plus, MapPin, X } from 'lucide-react';
+import { Building2, Smartphone, Banknote, Wallet, ArrowRightLeft, Plus, MapPin, X, Pencil } from 'lucide-react';
 import { TransferModal } from './TransferModal';
 import { showToast } from '@/lib/toast';
 
@@ -20,9 +20,10 @@ const initialAccountForm = {
 };
 
 export function AccountsModule() {
-  const { accounts, businesses, protectedFunds, createAccount, transferFunds } = useStore();
+  const { accounts, businesses, protectedFunds, createAccount, updateAccount, transferFunds } = useStore();
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [accountForm, setAccountForm] = useState(initialAccountForm);
   const [accountError, setAccountError] = useState('');
   const [isSavingAccount, setIsSavingAccount] = useState(false);
@@ -69,29 +70,58 @@ export function AccountsModule() {
 
   const resetAccountModal = () => {
     setAccountForm(initialAccountForm);
+    setEditingAccountId(null);
     setAccountError('');
     setIsAccountModalOpen(false);
   };
 
-  const handleCreateAccount = async () => {
+  const openCreateAccount = () => {
+    setEditingAccountId(null);
+    setAccountForm(initialAccountForm);
+    setAccountError('');
+    setIsAccountModalOpen(true);
+  };
+
+  const openEditAccount = (account: typeof accounts[number]) => {
+    setEditingAccountId(account.id);
+    setAccountForm({
+      name: account.name,
+      type: account.type,
+      bankName: account.bank_name || '',
+      balance: String(account.current_balance ?? 0),
+      scope: account.is_personal ? 'personal' : 'negocio',
+      businessId: account.business_id || '',
+    });
+    setAccountError('');
+    setIsAccountModalOpen(true);
+  };
+
+  const handleSaveAccount = async () => {
     setIsSavingAccount(true);
     setAccountError('');
 
     try {
-      await createAccount({
+      const payload = {
         name: accountForm.name,
         type: accountForm.type,
         bank_name: accountForm.bankName,
         current_balance: Number(accountForm.balance),
         is_personal: accountForm.scope === 'personal',
         business_id: accountForm.scope === 'negocio' ? accountForm.businessId : undefined,
-      });
-      showToast({ type: 'success', title: 'Cuenta creada', description: 'La cuenta ya aparece en el dashboard.' });
+      };
+
+      if (editingAccountId) {
+        await updateAccount(editingAccountId, payload);
+        showToast({ type: 'success', title: 'Cuenta actualizada', description: 'Los cambios quedaron guardados.' });
+      } else {
+        await createAccount(payload);
+        showToast({ type: 'success', title: 'Cuenta creada', description: 'La cuenta ya aparece en el dashboard.' });
+      }
       resetAccountModal();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'No se pudo crear la cuenta.';
+      const message = err instanceof Error ? err.message : editingAccountId ? 'No se pudo actualizar la cuenta.' : 'No se pudo crear la cuenta.';
       setAccountError(message);
-      showToast({ type: 'error', title: 'No se pudo crear la cuenta', description: message });
+      showToast({ type: 'error', title: editingAccountId ? 'No se pudo actualizar la cuenta' : 'No se pudo crear la cuenta', description: message });
     } finally {
       setIsSavingAccount(false);
     }
@@ -113,7 +143,7 @@ export function AccountsModule() {
           <Button onClick={() => setIsTransferModalOpen(true)} className="w-full bg-primary text-primary-foreground hover:bg-primary/90 sm:w-auto">
             <ArrowRightLeft className="w-4 h-4 mr-2" /> Transferir dinero
           </Button>
-          <Button variant="outline" onClick={() => setIsAccountModalOpen(true)} className="w-full sm:w-auto">
+          <Button variant="outline" onClick={openCreateAccount} className="w-full sm:w-auto">
             <Plus className="w-4 h-4 mr-2" /> Nueva cuenta
           </Button>
         </div>
@@ -140,7 +170,7 @@ export function AccountsModule() {
             {accounts.map((account) => (
               <Card key={account.id} className="bg-card hover:shadow-md transition-shadow">
                 <CardContent className="p-5 flex flex-col justify-between h-full">
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <div className={`p-2 rounded-xl ${getAccountColor(account.type)}`}>
                         {getAccountIcon(account.type)}
@@ -152,6 +182,16 @@ export function AccountsModule() {
                         </p>
                       </div>
                     </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditAccount(account)}
+                      className="h-9 shrink-0 px-2 text-muted-foreground hover:text-foreground"
+                    >
+                      <Pencil className="h-4 w-4" />
+                      <span className="sr-only">Editar cuenta</span>
+                    </Button>
                   </div>
                   <div className="mt-6 pt-4 border-t border-border flex items-end justify-between">
                     <div>
@@ -167,7 +207,7 @@ export function AccountsModule() {
                 <CardContent className="p-6 text-center text-muted-foreground">
                   <Wallet className="mx-auto mb-3 h-10 w-10 opacity-25" />
                   <p className="mb-4">Todavia no hay cuentas creadas.</p>
-                  <Button onClick={() => setIsAccountModalOpen(true)}>Crear primera cuenta</Button>
+                  <Button onClick={openCreateAccount}>Crear primera cuenta</Button>
                 </CardContent>
               </Card>
             )}
@@ -217,8 +257,8 @@ export function AccountsModule() {
           <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
             <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
               <div>
-                <CardTitle>Nueva cuenta</CardTitle>
-                <CardDescription>Registra una cuenta bancaria, Yappy o efectivo.</CardDescription>
+                <CardTitle>{editingAccountId ? 'Editar cuenta' : 'Nueva cuenta'}</CardTitle>
+                <CardDescription>{editingAccountId ? 'Actualiza nombre, tipo, saldo, banco o negocio asociado.' : 'Registra una cuenta bancaria, Yappy o efectivo.'}</CardDescription>
               </div>
               <button onClick={resetAccountModal} className="rounded-xl p-1 text-muted-foreground hover:bg-muted">
                 <X className="h-5 w-5" />
@@ -263,8 +303,8 @@ export function AccountsModule() {
             </CardContent>
             <CardFooter className="flex justify-end gap-2 border-t pt-4">
               <Button variant="outline" onClick={resetAccountModal}>Cancelar</Button>
-              <Button onClick={handleCreateAccount} disabled={isSavingAccount}>
-                {isSavingAccount ? 'Guardando...' : 'Guardar cuenta'}
+              <Button onClick={handleSaveAccount} disabled={isSavingAccount}>
+                {isSavingAccount ? 'Guardando...' : editingAccountId ? 'Guardar cambios' : 'Guardar cuenta'}
               </Button>
             </CardFooter>
           </Card>
