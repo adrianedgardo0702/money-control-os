@@ -173,7 +173,7 @@ export function dailyRevenueSeries(transactions: Transaction[]) {
     const day = index + 1;
     const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const total = transactions
-      .filter((transaction) => transaction.type === 'ingreso' && new Date(transaction.date).toISOString().slice(0, 10) === dateKey)
+      .filter((transaction) => transaction.type === 'ingreso' && toSafeDateKey(transaction.date) === dateKey)
       .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
     running += total;
     return { day: String(day), ingresos: total, acumulado: running };
@@ -181,13 +181,26 @@ export function dailyRevenueSeries(transactions: Transaction[]) {
 }
 
 function isCurrentMonth(dateValue: string) {
-  const date = new Date(dateValue);
+  const date = parseSafeDate(dateValue);
+  if (!date) return false;
   const now = new Date();
   return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
 }
 
 function isDueThisMonth(expense: RecurringExpense) {
-  const date = new Date(expense.due_date || expense.next_run_date);
+  const date = parseSafeDate(expense.due_date || expense.next_run_date);
+  if (!date) return false;
   const now = new Date();
   return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+}
+
+function parseSafeDate(dateValue?: string | null) {
+  if (!dateValue) return null;
+  const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toSafeDateKey(dateValue?: string | null) {
+  const date = parseSafeDate(dateValue);
+  return date ? date.toISOString().slice(0, 10) : null;
 }

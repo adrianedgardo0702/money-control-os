@@ -43,7 +43,7 @@ export function Overview() {
   const plan = buildTargetPlan({ target: monthlyTarget, weights: businessTargetWeights, businesses, recurringExpenses, debts, transactions, protectedFunds });
 
   const todayKey = new Date().toISOString().split('T')[0];
-  const todayTransactions = transactions.filter((transaction) => new Date(transaction.date).toISOString().split('T')[0] === todayKey);
+  const todayTransactions = transactions.filter((transaction) => toDateKey(transaction.date) === todayKey);
   const todayIncome = todayTransactions.filter((transaction) => transaction.type === 'ingreso').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   const todayExpenses = todayTransactions.filter((transaction) => transaction.type === 'gasto').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   const todayNet = todayIncome - todayExpenses;
@@ -273,8 +273,20 @@ function filterProtectedFunds(funds: ReturnType<typeof useStore.getState>['prote
   return funds.filter((fund) => fund.business_id === unit);
 }
 
-function isInPeriod(dateValue: string, period: string) {
+function parseDateValue(dateValue?: string | null) {
+  if (!dateValue) return null;
   const date = new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function toDateKey(dateValue?: string | null) {
+  const date = parseDateValue(dateValue);
+  return date ? date.toISOString().slice(0, 10) : null;
+}
+
+function isInPeriod(dateValue: string, period: string) {
+  const date = parseDateValue(dateValue);
+  if (!date) return false;
   const now = new Date();
   if (period === 'today') return date.toDateString() === now.toDateString();
   if (period === 'this_week') return date >= addDays(now, -7) && date <= addDays(now, 1);
@@ -292,8 +304,9 @@ function buildFlowChart(transactions: ReturnType<typeof useStore.getState>['tran
   const formatter = new Intl.DateTimeFormat('es-PA', { day: '2-digit', month: 'short' });
   const totals = new Map<string, { key: string; name: string; ingresos: number; gastos: number }>();
   transactions.forEach((transaction) => {
-    const date = new Date(transaction.date);
-    const key = date.toISOString().slice(0, 10);
+    const date = parseDateValue(transaction.date);
+    const key = toDateKey(transaction.date);
+    if (!date || !key) return;
     const row = totals.get(key) || { key, name: formatter.format(date), ingresos: 0, gastos: 0 };
     if (transaction.type === 'ingreso') row.ingresos += Number(transaction.amount || 0);
     if (transaction.type === 'gasto') row.gastos += Number(transaction.amount || 0);
