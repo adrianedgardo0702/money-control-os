@@ -2,7 +2,7 @@ import type {Metadata} from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Money Control OS',
+  title: 'Noa Finanzas',
   description: 'App privada para controlar negocios, cuentas, gastos, deudas y reportes financieros.',
 };
 

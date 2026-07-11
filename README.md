@@ -1,4 +1,4 @@
-# Money Control OS
+# Noa Finanzas
 
 App privada de finanzas construida con Next.js y Supabase para controlar cuentas, negocios, flujo de caja, deudas, gastos recurrentes, fondos protegidos y reportes.
 

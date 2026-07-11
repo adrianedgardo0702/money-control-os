@@ -1,4 +1,4 @@
--- Run this in Supabase SQL Editor for the live Money Control OS project.
+-- Run this in Supabase SQL Editor for the live Noa Finanzas project.
 -- It is non-destructive: it adds planning columns/tables without deleting existing data.
 
 ALTER TABLE public.recurring_expenses

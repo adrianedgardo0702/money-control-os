@@ -90,7 +90,7 @@ export function SetupScreen({ isLogin = false }: { isLogin?: boolean }) {
           </CardTitle>
           <CardDescription>
             {mode === 'login'
-              ? 'Accede a tu Money Control OS.'
+              ? 'Accede a Noa Finanzas.'
               : 'Crea una cuenta para comenzar.'}
           </CardDescription>
         </CardHeader>

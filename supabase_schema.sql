@@ -1,4 +1,4 @@
--- Schema setup for Money Control OS in Supabase
+-- Schema setup for Noa Finanzas in Supabase
 
 -- Businesses Table
 CREATE TABLE IF NOT EXISTS public.businesses (

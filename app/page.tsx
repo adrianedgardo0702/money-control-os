@@ -79,8 +79,8 @@ export default function App() {
       <header className="sticky top-0 z-40 border-b border-border bg-card/95 px-4 py-3 backdrop-blur md:hidden">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="truncate text-base font-display font-bold tracking-tight">Money Control OS</h1>
-            <p className="truncate text-xs font-medium text-muted-foreground">{activeItem.label}</p>
+            <h1 className="truncate text-base font-display font-bold tracking-tight">Noa Finanzas</h1>
+            <p className="truncate text-xs font-medium text-muted-foreground">ViciousLabs S.A. · {activeItem.label}</p>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -117,7 +117,8 @@ export default function App() {
       {/* Sidebar */}
       <aside className="hidden w-64 shrink-0 border-r border-border bg-card md:flex md:flex-col">
         <div className="p-6">
-          <h1 className="text-xl font-display font-bold tracking-tight">Money Control OS</h1>
+          <h1 className="text-xl font-display font-bold tracking-tight">Noa Finanzas</h1>
+          <p className="mt-1 text-xs font-medium text-muted-foreground">ViciousLabs S.A.</p>
         </div>
         
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
