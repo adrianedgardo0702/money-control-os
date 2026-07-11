@@ -29,6 +29,7 @@ import { FinancialChatModule } from "@/components/dashboard/FinancialChatModule"
 import { ReportsModule } from "@/components/dashboard/ReportsModule";
 import { ToastViewport } from '@/components/ui/toast';
 import { AppErrorBoundary } from '@/components/dashboard/AppErrorBoundary';
+import { buildInfo } from '@/lib/buildInfo';
 
 import { TransactionModal } from '@/components/dashboard/TransactionModal';
 
@@ -226,6 +227,11 @@ function SettingsModule() {
       </div>
       <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
         La configuracion avanzada se puede agregar aqui sin mezclarla con tus finanzas personales o negocios.
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4 text-sm">
+        <p className="font-semibold text-foreground">Version instalada</p>
+        <p className="mt-1 text-muted-foreground">{buildInfo.version}</p>
+        <p className="text-xs text-muted-foreground">{buildInfo.label}</p>
       </div>
     </div>
   );
