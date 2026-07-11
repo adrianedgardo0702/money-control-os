@@ -28,10 +28,19 @@ import { PersonalBudgetModule } from '@/components/dashboard/PersonalBudgetModul
 import { FinancialChatModule } from "@/components/dashboard/FinancialChatModule";
 import { ReportsModule } from "@/components/dashboard/ReportsModule";
 import { ToastViewport } from '@/components/ui/toast';
+import { AppErrorBoundary } from '@/components/dashboard/AppErrorBoundary';
 
 import { TransactionModal } from '@/components/dashboard/TransactionModal';
 
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <DashboardApp />
+    </AppErrorBoundary>
+  );
+}
+
+function DashboardApp() {
   const { user, isLoading, isPreviewMode, fetchInitialData, signOut } = useStore();
   const [activeTab, setActiveTab] = useState('overview');
   const [modalConfig, setModalConfig] = useState<{isOpen: boolean, type: 'ingreso' | 'gasto'}>({ isOpen: false, type: 'ingreso' });
