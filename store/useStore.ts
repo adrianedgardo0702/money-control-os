@@ -66,6 +66,10 @@ export type RecurringExpense = {
   frequency: string;
   start_date: string;
   next_run_date: string;
+  business_unit_id?: string;
+  due_date?: string;
+  is_required?: boolean;
+  is_active?: boolean;
   payment_method?: string;
   mode: string;
   status: string;
@@ -91,6 +95,25 @@ export type Debt = {
   recommendation?: string;
 };
 
+export type MonthlyTarget = {
+  id?: string;
+  user_id?: string;
+  operating_days_per_month: number;
+  personal_budget_target: number;
+  debt_payment_target: number;
+  reinvestment_target: number;
+  desired_profit: number;
+  reserve_target: number;
+  growth_target: number;
+};
+
+export type BusinessTargetWeight = {
+  id?: string;
+  user_id?: string;
+  business_unit_id: string;
+  weight_percent: number;
+};
+
 type AppState = {
   user: User | null;
   businesses: Business[];
@@ -104,6 +127,8 @@ type AppState = {
   protectedFunds: ProtectedFund[];
   recurringExpenses: RecurringExpense[];
   debts: Debt[];
+  monthlyTarget: MonthlyTarget | null;
+  businessTargetWeights: BusinessTargetWeight[];
   setActiveBusinessId: (id: string | 'all' | 'personal') => void;
   setAccounts: (accounts: Account[]) => void;
   setPreviewMode: (val: boolean) => void;
@@ -165,6 +190,10 @@ type AppState = {
     frequency: string;
     start_date: string;
     next_run_date: string;
+    business_unit_id?: string | null;
+    due_date?: string | null;
+    is_required?: boolean;
+    is_active?: boolean;
     payment_method?: string;
     mode: string;
     business_id?: string | null;
@@ -173,6 +202,8 @@ type AppState = {
   }) => Promise<RecurringExpense>;
   updateRecurringExpenseStatus: (id: string, status: string) => Promise<void>;
   deleteRecurringExpense: (id: string) => Promise<void>;
+  upsertMonthlyTarget: (input: Omit<MonthlyTarget, 'id' | 'user_id'>) => Promise<MonthlyTarget>;
+  upsertBusinessTargetWeights: (weights: { business_unit_id: string; weight_percent: number }[]) => Promise<BusinessTargetWeight[]>;
   createDebt: (input: {
     name: string;
     type: string;
@@ -234,6 +265,8 @@ export const useStore = create<AppState>((set, get) => ({
   protectedFunds: [],
   recurringExpenses: [],
   debts: [],
+  monthlyTarget: null,
+  businessTargetWeights: [],
   setPreviewMode: (val) => set({ isPreviewMode: val, isLoading: false, user: val ? { id: 'preview', email: 'preview@example.com' } : null }),
   setAccounts: (accounts) => set({ accounts }),
   fetchInitialData: async () => {
@@ -269,6 +302,16 @@ export const useStore = create<AppState>((set, get) => ({
           { data: debts }
         ] = results;
 
+        const [monthlyTargetResult, businessWeightsResult] = await Promise.all([
+          supabase.from('monthly_targets').select('*').eq('user_id', session.user.id).maybeSingle(),
+          supabase.from('business_target_weights').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true })
+        ]);
+
+        const optionalTargetError = monthlyTargetResult.error && monthlyTargetResult.error.code !== 'PGRST116';
+        const optionalWeightsError = businessWeightsResult.error;
+        if (optionalTargetError) console.warn('Monthly targets unavailable:', getErrorMessage(monthlyTargetResult.error));
+        if (optionalWeightsError) console.warn('Business target weights unavailable:', getErrorMessage(optionalWeightsError));
+
         set({
           businesses: businesses || [],
           accounts: accounts || [],
@@ -276,6 +319,8 @@ export const useStore = create<AppState>((set, get) => ({
           protectedFunds: protectedFunds || [],
           recurringExpenses: recurringExpenses || [],
           debts: debts || [],
+          monthlyTarget: optionalTargetError ? null : (monthlyTargetResult.data as MonthlyTarget | null),
+          businessTargetWeights: optionalWeightsError ? [] : ((businessWeightsResult.data || []) as BusinessTargetWeight[]),
           lastSyncedAt: new Date().toISOString(),
           dataError: null
         });
@@ -288,6 +333,8 @@ export const useStore = create<AppState>((set, get) => ({
           protectedFunds: [],
           recurringExpenses: [],
           debts: [],
+          monthlyTarget: null,
+          businessTargetWeights: [],
           lastSyncedAt: new Date().toISOString(),
           dataError: null
         });
@@ -303,7 +350,7 @@ export const useStore = create<AppState>((set, get) => ({
   signOut: async () => {
     if (supabase) {
       await supabase.auth.signOut();
-      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], lastSyncedAt: null, dataError: null });
+      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
     }
   },
   createBusiness: async (input) => {
@@ -556,28 +603,61 @@ export const useStore = create<AppState>((set, get) => ({
     if (!input.start_date || !input.next_run_date) throw new Error('Selecciona las fechas del recurrente.');
     if (input.scope === 'negocio' && !input.business_id) throw new Error('Selecciona el negocio del recurrente.');
 
+    const payload = {
+      user_id: user.id,
+      name,
+      scope: input.scope,
+      category: input.category.trim(),
+      amount,
+      frequency: input.frequency,
+      start_date: input.start_date,
+      next_run_date: input.next_run_date,
+      business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
+      due_date: input.due_date || input.next_run_date,
+      is_required: input.is_required ?? true,
+      is_active: input.is_active ?? true,
+      payment_method: input.payment_method?.trim() || null,
+      mode: input.mode,
+      status: input.is_active === false ? 'paused' : 'active',
+      business_id: input.scope === 'negocio' ? input.business_id : null,
+      account_id: input.account_id || null,
+      notes: input.notes?.trim() || null
+    };
+
     const { data, error } = await client
       .from('recurring_expenses')
-      .insert({
-        user_id: user.id,
-        name,
-        scope: input.scope,
-        category: input.category.trim(),
-        amount,
-        frequency: input.frequency,
-        start_date: input.start_date,
-        next_run_date: input.next_run_date,
-        payment_method: input.payment_method?.trim() || null,
-        mode: input.mode,
-        status: 'active',
-        business_id: input.scope === 'negocio' ? input.business_id : null,
-        account_id: input.account_id || null,
-        notes: input.notes?.trim() || null
-      })
+      .insert(payload)
       .select('*')
       .single();
 
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      const legacyPayload = {
+        user_id: payload.user_id,
+        name: payload.name,
+        scope: payload.scope,
+        category: payload.category,
+        amount: payload.amount,
+        frequency: payload.frequency,
+        start_date: payload.start_date,
+        next_run_date: payload.next_run_date,
+        payment_method: payload.payment_method,
+        mode: payload.mode,
+        status: payload.status,
+        business_id: payload.business_id,
+        account_id: payload.account_id,
+        notes: payload.notes
+      };
+      const { data: legacyData, error: legacyError } = await client
+        .from('recurring_expenses')
+        .insert(legacyPayload)
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const expense = legacyData as RecurringExpense;
+      set({ recurringExpenses: [...get().recurringExpenses, expense] });
+      await get().fetchInitialData();
+      return expense;
+    }
     const expense = data as RecurringExpense;
     set({ recurringExpenses: [...get().recurringExpenses, expense] });
     await get().fetchInitialData();
@@ -604,6 +684,61 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) throw new Error(getErrorMessage(error));
     set({ recurringExpenses: get().recurringExpenses.filter((expense) => expense.id !== id) });
     await get().fetchInitialData();
+  },
+  upsertMonthlyTarget: async (input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const payload = {
+      user_id: user.id,
+      operating_days_per_month: Math.max(1, Number(input.operating_days_per_month || 26)),
+      personal_budget_target: Number(input.personal_budget_target || 0),
+      debt_payment_target: Number(input.debt_payment_target || 0),
+      reinvestment_target: Number(input.reinvestment_target || 0),
+      desired_profit: Number(input.desired_profit || 0),
+      reserve_target: Number(input.reserve_target || 0),
+      growth_target: Number(input.growth_target || 0),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await client
+      .from('monthly_targets')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select('*')
+      .single();
+
+    if (error) throw new Error(getErrorMessage(error));
+    const target = data as MonthlyTarget;
+    set({ monthlyTarget: target });
+    await get().fetchInitialData();
+    return target;
+  },
+  upsertBusinessTargetWeights: async (weights) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const payload = weights
+      .filter((weight) => weight.business_unit_id)
+      .map((weight) => ({
+        user_id: user.id,
+        business_unit_id: weight.business_unit_id,
+        weight_percent: Number(weight.weight_percent || 0),
+        updated_at: new Date().toISOString()
+      }));
+
+    if (payload.length === 0) {
+      set({ businessTargetWeights: [] });
+      return [];
+    }
+
+    const { data, error } = await client
+      .from('business_target_weights')
+      .upsert(payload, { onConflict: 'user_id,business_unit_id' })
+      .select('*');
+
+    if (error) throw new Error(getErrorMessage(error));
+    const nextWeights = (data || []) as BusinessTargetWeight[];
+    set({ businessTargetWeights: nextWeights });
+    await get().fetchInitialData();
+    return nextWeights;
   },
   createDebt: async (input) => {
     const client = requireSupabase();

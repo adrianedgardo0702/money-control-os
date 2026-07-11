@@ -7,6 +7,7 @@ import { ArrowUpRight, ArrowDownRight, Activity, Wallet, AlertCircle, RefreshCcw
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useStore } from '@/store/useStore';
 import { showToast } from '@/lib/toast';
+import { BillingTargetsPanel } from './BillingTargetsPanel';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -108,6 +109,8 @@ export function Overview() {
           </CardContent>
         </Card>
       )}
+
+      <BillingTargetsPanel compact />
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard title="Ingresos del dia" value={money(todayIncome)} icon={<ArrowUpRight className="w-4 h-4 text-success" />} />

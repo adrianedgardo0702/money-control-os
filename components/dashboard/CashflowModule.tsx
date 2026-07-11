@@ -21,7 +21,9 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { TransactionModal } from './TransactionModal';
+import { BillingTargetsPanel } from './BillingTargetsPanel';
 import { useStore, Transaction } from '@/store/useStore';
+import { monthlyCost } from '@/lib/financePlanning';
 import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -70,7 +72,7 @@ export function CashflowModule() {
   const currentMoney = accounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const expectedIncome = filteredTransactions.filter((transaction) => transaction.type === 'ingreso' && isInSelectedPeriod(transaction.date, period)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
   const upcomingRecurring = recurringExpenses.filter((expense) => expense.status === 'active' && isUpcoming(expense.next_run_date));
-  const upcomingRecurringTotal = upcomingRecurring.reduce((sum, expense) => sum + Number(expense.amount), 0);
+  const upcomingRecurringTotal = upcomingRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
   const upcomingDebtMinimums = debts.filter((debt) => debt.status !== 'Pagada').reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
   const upcomingOutflows = upcomingRecurringTotal + upcomingDebtMinimums;
   const protectedMoney = protectedFunds.filter((fund) => fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
@@ -232,6 +234,8 @@ export function CashflowModule() {
         <Summary title="Dinero libre seguro" value={safeFreeMoney} icon={<ShieldCheck className="w-4 h-4" />} tone="success" emphasized />
       </div>
 
+      <BillingTargetsPanel />
+
       <Card className="border-l-4 border-l-blue-500 bg-blue-500/5 shadow-md">
         <CardContent className="p-6 flex items-start gap-4">
           <Zap className="w-6 h-6 text-blue-500 shrink-0 mt-0.5" />
@@ -309,7 +313,7 @@ export function CashflowModule() {
           </CardHeader>
           <CardContent className="space-y-4">
             {upcomingRecurring.map((expense) => (
-              <UpcomingItem key={expense.id} title={expense.name} amount={Number(expense.amount)} date={expense.next_run_date} />
+              <UpcomingItem key={expense.id} title={expense.name} amount={monthlyCost(expense)} date={expense.due_date || expense.next_run_date} />
             ))}
             {debts.filter((debt) => Number(debt.minimum || 0) > 0).map((debt) => (
               <UpcomingItem key={debt.id} title={debt.name} amount={Number(debt.minimum || 0)} date={debt.due_date || 'Sin fecha'} icon={<CreditCard className="w-4 h-4 text-destructive" />} />

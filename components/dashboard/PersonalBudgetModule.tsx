@@ -21,6 +21,7 @@ import {
 import { TransactionModal } from './TransactionModal';
 import { TransferModal } from './TransferModal';
 import { useStore, Transaction } from '@/store/useStore';
+import { monthlyCost } from '@/lib/financePlanning';
 import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -51,7 +52,7 @@ export function PersonalBudgetModule() {
   const monthlyExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto' && isCurrentMonth(transaction.date)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
   const personalMoney = personalAccounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const personalRecurring = recurringExpenses.filter((expense) => expense.scope === 'personal' && expense.status === 'active');
-  const personalRecurringTotal = personalRecurring.reduce((sum, expense) => sum + Number(expense.amount), 0);
+  const personalRecurringTotal = personalRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
   const personalDebts = debts.filter((debt) => (debt.category || '').toLowerCase().includes('personal') || !debt.category);
   const personalDebtMinimum = personalDebts.reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
   const personalSavings = protectedFunds.filter((fund) => fund.scope === 'personal' && fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
@@ -65,6 +66,8 @@ export function PersonalBudgetModule() {
   const hasPersonalData = personalAccounts.length > 0 || personalTransactions.length > 0 || personalRecurring.length > 0 || personalDebts.length > 0 || personalSavings > 0;
   const recentExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto').slice(0, 6);
   const recentIncome = personalTransactions.filter((transaction) => transaction.type === 'ingreso').slice(0, 6);
+  const personalFixedLoad = personalRecurringTotal + personalDebtMinimum + recommendedSaving;
+  const estimatedFreeUse = Math.max(0, personalMoney - personalFixedLoad);
 
   const categoryTotals = groupPersonalExpenses(personalTransactions);
   const businessWithdrawals = businesses.map((business) => {
@@ -161,6 +164,20 @@ export function PersonalBudgetModule() {
         <Summary title="Ahorro recomendado" value={recommendedSaving} icon={<PiggyBank className="w-4 h-4" />} tone="primary" emphasized />
         <Summary title="Retiro seguro negocios" value={businessSafeWithdrawal} icon={<Building className="w-4 h-4 text-primary" />} />
       </div>
+
+      <Card className="border-l-4 border-l-primary bg-primary/5">
+        <CardHeader>
+          <CardTitle>Carga fija mensual relacionada al plano personal</CardTitle>
+          <CardDescription>Incluye recurrentes personales, deuda personal, ahorro meta y uso libre estimado.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <DistributionRow label="Gastos fijos personales" value={personalRecurringTotal} />
+          <DistributionRow label="Deudas personales" value={personalDebtMinimum} tone="warning" />
+          <DistributionRow label="Ahorro meta" value={recommendedSaving} tone="primary" />
+          <DistributionRow label="Retiros seguros" value={businessSafeWithdrawal} tone="success" />
+          <DistributionRow label="Uso libre estimado" value={estimatedFreeUse} tone="success" />
+        </CardContent>
+      </Card>
 
       <Card className="border-l-4 border-l-blue-500 bg-blue-500/5 shadow-md">
         <CardContent className="p-6 flex items-start gap-4">
@@ -288,7 +305,7 @@ export function PersonalBudgetModule() {
                         <p className="font-medium text-sm">{expense.name}</p>
                         <p className="text-xs text-muted-foreground">Pago: {expense.next_run_date}</p>
                       </div>
-                      <span className="font-bold">{money(Number(expense.amount))}</span>
+                      <span className="font-bold">{money(monthlyCost(expense))}</span>
                     </CardContent>
                   </Card>
                 ))}
