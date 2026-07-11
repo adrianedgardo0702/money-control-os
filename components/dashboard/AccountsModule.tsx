@@ -209,13 +209,13 @@ export function AccountsModule() {
                     </div>
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => openEditAccount(account)}
-                      className="h-9 shrink-0 px-2 text-muted-foreground hover:text-foreground"
+                      className="h-8 shrink-0 px-3 text-xs"
                     >
-                      <Pencil className="h-4 w-4" />
-                      <span className="sr-only">Editar cuenta</span>
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                      Editar
                     </Button>
                   </div>
                   <div className="mt-6 pt-4 border-t border-border flex items-end justify-between">
@@ -303,7 +303,7 @@ export function AccountsModule() {
                     <option value="Caja negocio">Caja negocio</option>
                   </select>
                 </Field>
-                <Field label="Saldo inicial">
+                <Field label={editingAccountId ? 'Saldo actual' : 'Saldo inicial'}>
                   <input type="number" min="0" step="0.01" value={accountForm.balance} onChange={(event) => setAccountForm({ ...accountForm, balance: event.target.value })} className="form-field" />
                 </Field>
               </div>
