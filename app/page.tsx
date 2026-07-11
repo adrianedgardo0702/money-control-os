@@ -13,10 +13,9 @@ import {
   MessageSquare,
   FileText,
   LogOut,
-  Repeat,
   PlusCircle,
   MinusCircle,
-  ShieldAlert
+  Settings
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -25,11 +24,8 @@ import { SetupScreen } from '@/components/dashboard/SetupScreen';
 import { AccountsModule } from '@/components/dashboard/AccountsModule';
 import { BusinessesModule } from '@/components/dashboard/BusinessesModule';
 import { CashflowModule } from '@/components/dashboard/CashflowModule';
-import { DebtsModule } from '@/components/dashboard/DebtsModule';
 import { PersonalBudgetModule } from '@/components/dashboard/PersonalBudgetModule';
 import { FinancialChatModule } from "@/components/dashboard/FinancialChatModule";
-import { RecurringExpensesModule } from "@/components/dashboard/RecurringExpensesModule";
-import { ProtectedFundsModule } from "@/components/dashboard/ProtectedFundsModule";
 import { ReportsModule } from "@/components/dashboard/ReportsModule";
 import { ToastViewport } from '@/components/ui/toast';
 
@@ -62,15 +58,13 @@ export default function App() {
 
   const navItems = [
     { id: 'overview', label: 'Dashboard General', icon: LayoutDashboard },
-    { id: 'accounts', label: 'Cuentas y Bolsillos', icon: Landmark },
+    { id: 'personal', label: 'Finanzas Personales', icon: Wallet },
     { id: 'businesses', label: 'Mis Negocios', icon: Briefcase },
+    { id: 'accounts', label: 'Cuentas y Bolsillos', icon: Landmark },
     { id: 'cashflow', label: 'Flujo de Caja', icon: TrendingUp },
-    { id: 'protected', label: 'Dinero No Tocar', icon: ShieldAlert },
-    { id: 'debts', label: 'Deudas', icon: CreditCard },
-    { id: 'recurring', label: 'Gastos Recurrentes', icon: Repeat },
-    { id: 'personal', label: 'Presupuesto Personal', icon: Wallet },
-    { id: 'chat', label: 'Chat Financiero', icon: MessageSquare },
+    { id: 'chat', label: 'Noa Rapida', icon: MessageSquare },
     { id: 'reports', label: 'Reportes PDF', icon: FileText },
+    { id: 'settings', label: 'Configuracion', icon: Settings },
   ];
   const activeItem = navItems.find((item) => item.id === activeTab) || navItems[0];
 
@@ -175,12 +169,10 @@ export default function App() {
         {activeTab === 'accounts' && <AccountsModule />}
         {activeTab === 'businesses' && <BusinessesModule onNavigate={setActiveTab} />}
         {activeTab === 'cashflow' && <CashflowModule />}
-        {activeTab === 'protected' && <ProtectedFundsModule />}
-        {activeTab === 'debts' && <DebtsModule />}
         {activeTab === 'personal' && <PersonalBudgetModule />}
         {activeTab === 'chat' && <FinancialChatModule />}
-        {activeTab === 'recurring' && <RecurringExpensesModule />}
         {activeTab === 'reports' && <ReportsModule />}
+        {activeTab === 'settings' && <SettingsModule />}
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 backdrop-blur md:hidden">
@@ -212,6 +204,20 @@ export default function App() {
         onClose={() => setModalConfig({ ...modalConfig, isOpen: false })} 
       />
       <ToastViewport />
+    </div>
+  );
+}
+
+function SettingsModule() {
+  return (
+    <div className="mx-auto max-w-3xl space-y-4">
+      <div>
+        <h2 className="text-2xl font-display font-bold tracking-tight md:text-3xl">Configuracion</h2>
+        <p className="mt-1 text-muted-foreground">Ajustes generales de Noa Finanzas.</p>
+      </div>
+      <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+        La configuracion avanzada se puede agregar aqui sin mezclarla con tus finanzas personales o negocios.
+      </div>
     </div>
   );
 }

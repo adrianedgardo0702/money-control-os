@@ -1,11 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { X, TrendingUp, AlertCircle } from 'lucide-react';
+import { X, TrendingUp, AlertCircle, Calendar, CreditCard, ShieldAlert, Target } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Transaction } from '@/store/useStore';
+import { Transaction, useStore } from '@/store/useStore';
+import { BillingTargetsPanel } from './BillingTargetsPanel';
+import { money, monthlyCost } from '@/lib/financePlanning';
 
 interface BusinessDetailModalProps {
   business: any;
@@ -36,10 +39,18 @@ const getChartData = (transactions: Transaction[] = []) => {
 };
 
 export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncome, onRegisterExpense }: BusinessDetailModalProps) {
+  const { recurringExpenses, debts, protectedFunds } = useStore();
+  const [tab, setTab] = useState('summary');
   if (!isOpen || !business) return null;
 
   const chartData = getChartData(business.transactions);
   const recentTransactions = (business.transactions || []).slice(0, 5);
+  const businessFixedExpenses = recurringExpenses.filter((expense) => expense.status === 'active' && expense.business_id === business.id);
+  const businessFunds = protectedFunds.filter((fund) => fund.status === 'active' && fund.business_id === business.id);
+  const businessDebts = debts.filter((debt) => (debt.category || '').toLowerCase().includes(String(business.name).toLowerCase()));
+  const fixedTotal = businessFixedExpenses.reduce((sum, expense) => sum + monthlyCost(expense), 0);
+  const protectedTotal = businessFunds.reduce((sum, fund) => sum + Number(fund.amount || 0), 0);
+  const debtTotal = businessDebts.reduce((sum, debt) => sum + Number(debt.pending || 0), 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
@@ -66,6 +77,22 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
         </CardHeader>
 
         <CardContent className="pt-6 space-y-8">
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {[
+              ['summary', 'Resumen'],
+              ['movements', 'Ingresos y gastos'],
+              ['fixed', 'Gastos fijos'],
+              ['debts', 'Deudas'],
+              ['protected', 'Dinero no tocar'],
+              ['targets', 'Metas'],
+              ['report', 'Reporte'],
+            ].map(([id, label]) => (
+              <Button key={id} variant={tab === id ? 'default' : 'outline'} size="sm" onClick={() => setTab(id)}>
+                {label}
+              </Button>
+            ))}
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Stat label="Ingresos" value={`$${business.income.toLocaleString()}`} tone="success" />
             <Stat label="Gastos" value={`$${business.expense.toLocaleString()}`} tone="destructive" />
@@ -73,7 +100,13 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
             <Stat label="Margen estimado" value={`${business.margin}%`} />
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8">
+          {tab === 'summary' && <div className="grid gap-4 md:grid-cols-3">
+            <ContextCard icon={<Calendar className="h-4 w-4" />} title="Gastos fijos del negocio" value={money(fixedTotal)} detail={`${businessFixedExpenses.length} activos`} />
+            <ContextCard icon={<CreditCard className="h-4 w-4" />} title="Deudas del negocio" value={money(debtTotal)} detail={businessDebts.length ? `${businessDebts.length} asociadas` : 'Sin deudas asociadas'} />
+            <ContextCard icon={<ShieldAlert className="h-4 w-4" />} title="Dinero no tocar" value={money(protectedTotal)} detail={businessFunds.length ? `${businessFunds.length} reservas` : 'Sin reservas'} />
+          </div>}
+
+          {(tab === 'summary' || tab === 'movements') && <div className="grid md:grid-cols-2 gap-8">
             <div className="space-y-4">
               <h3 className="text-lg font-medium">Ingresos vs gastos</h3>
               <div className="h-[250px] w-full p-4 rounded-xl border border-border/50 bg-card">
@@ -122,9 +155,9 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
                 <p className="text-sm text-orange-400 font-medium">{business.recommendation}</p>
               </div>
             </div>
-          </div>
+          </div>}
 
-          <div className="space-y-4">
+          {(tab === 'summary' || tab === 'movements') && <div className="space-y-4">
             <h3 className="text-lg font-medium">Ultimos movimientos</h3>
             <div className="rounded-xl border border-border/50 overflow-hidden">
               <div className="grid grid-cols-5 bg-muted/50 p-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -149,9 +182,97 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
                 )}
               </div>
             </div>
-          </div>
+          </div>}
+
+          {tab === 'fixed' && (
+            <ContextList
+              title="Gastos fijos del negocio"
+              empty="Este negocio aun no tiene gastos fijos registrados."
+              rows={businessFixedExpenses.map((expense) => ({
+                id: expense.id,
+                title: expense.name,
+                detail: `${expense.category || 'Sin categoria'} · Pago: ${expense.due_date || expense.next_run_date}`,
+                value: money(monthlyCost(expense)),
+              }))}
+            />
+          )}
+
+          {tab === 'debts' && (
+            <ContextList
+              title="Deudas del negocio"
+              empty="No hay deudas asociadas a este negocio todavia."
+              rows={businessDebts.map((debt) => ({
+                id: debt.id,
+                title: debt.name,
+                detail: `${debt.type} · Minimo: ${money(Number(debt.minimum || 0))}`,
+                value: money(Number(debt.pending || 0)),
+              }))}
+            />
+          )}
+
+          {tab === 'protected' && (
+            <ContextList
+              title="Dinero no tocar del negocio"
+              empty="No hay reservas protegidas para este negocio."
+              rows={businessFunds.map((fund) => ({
+                id: fund.id,
+                title: fund.name,
+                detail: `${fund.fund_type} · ${fund.priority}`,
+                value: money(Number(fund.amount || 0)),
+              }))}
+            />
+          )}
+
+          {tab === 'targets' && (
+            <div className="space-y-4">
+              <h3 className="flex items-center gap-2 text-lg font-medium"><Target className="h-5 w-5 text-primary" /> Metas de facturacion</h3>
+              <BillingTargetsPanel />
+            </div>
+          )}
+
+          {tab === 'report' && (
+            <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
+              El reporte del negocio se arma con sus ingresos, gastos, reservas, deudas y metas. Usa Reportes PDF para exportar el consolidado.
+            </div>
+          )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function ContextCard({ icon, title, value, detail }: { icon: React.ReactNode; title: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-muted/20 p-4">
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <span>{title}</span>
+        {icon}
+      </div>
+      <p className="mt-2 text-xl font-bold">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+function ContextList({ title, rows, empty }: { title: string; rows: { id: string; title: string; detail: string; value: string }[]; empty: string }) {
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-medium">{title}</h3>
+      {rows.length > 0 ? (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={row.id} className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-4">
+              <div>
+                <p className="font-medium">{row.title}</p>
+                <p className="text-sm text-muted-foreground">{row.detail}</p>
+              </div>
+              <span className="font-bold">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">{empty}</div>
+      )}
     </div>
   );
 }

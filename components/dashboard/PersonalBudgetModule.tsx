@@ -117,8 +117,8 @@ export function PersonalBudgetModule() {
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-2xl font-display font-bold tracking-tight md:text-3xl">Presupuesto Personal</h2>
-          <p className="text-muted-foreground mt-1">Controla cuanto puedes gastar personalmente sin afectar negocios, deudas ni reservas.</p>
+          <h2 className="text-2xl font-display font-bold tracking-tight md:text-3xl">Finanzas Personales</h2>
+          <p className="text-muted-foreground mt-1">Centro de control para tu dinero personal, gastos fijos, deudas, ahorro y retiros desde negocios.</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <Select value={period} onChange={setPeriod} options={[
@@ -134,10 +134,13 @@ export function PersonalBudgetModule() {
             ['emergency', 'Emergencia'],
           ]} />
           <Select value={view} onChange={setView} options={[
-            ['summary', 'Resumen'],
-            ['expenses', 'Gastos'],
+            ['summary', 'Resumen personal'],
+            ['expenses', 'Ingresos y gastos'],
+            ['fixed', 'Gastos fijos'],
+            ['debts', 'Deudas'],
+            ['budget', 'Presupuesto'],
+            ['savings', 'Ahorro y metas'],
             ['withdrawals', 'Retiros'],
-            ['savings', 'Ahorro'],
           ]} />
         </div>
       </div>
