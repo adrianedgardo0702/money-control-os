@@ -23,6 +23,7 @@ const initialExpenseForm = {
   businessUnitId: PERSONAL_UNIT_ID,
   accountId: '',
   category: 'Otros',
+  customCategory: '',
   amount: '',
   frequency: 'Mensual',
   startDate: today,
@@ -48,6 +49,9 @@ export function RecurringExpensesModule() {
     { id: PERSONAL_UNIT_ID, name: 'Finanzas personales' },
     ...businesses.map((business) => ({ id: business.id, name: business.name })),
   ];
+  const customCategoryOptions = Array.from(new Set(recurringExpenses.map((expense) => expense.category).filter(Boolean)))
+    .filter((category) => !fixedExpenseCategories.includes(category))
+    .sort((a, b) => a.localeCompare(b));
 
   const openCreateModal = (businessUnitId?: string) => {
     const business = businesses.find((item) => item.id === businessUnitId);
@@ -70,12 +74,13 @@ export function RecurringExpensesModule() {
   const handleSave = async () => {
     setLoading(true);
     setError('');
+    const category = form.category === 'Personalizada' ? form.customCategory.trim() : form.category;
 
     try {
       await createRecurringExpense({
         name: form.name,
         scope: form.scope as 'personal' | 'negocio',
-        category: form.category,
+        category,
         amount: Number(form.amount),
         frequency: form.frequency,
         start_date: form.startDate,
@@ -258,9 +263,21 @@ export function RecurringExpensesModule() {
                 <Field label="Seccion / categoria">
                   <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} className="form-field">
                     {fixedExpenseCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                    {customCategoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
+                    <option value="Personalizada">Personalizada</option>
                   </select>
                 </Field>
               </div>
+              {form.category === 'Personalizada' && (
+                <Field label="Categoria personalizada">
+                  <input
+                    value={form.customCategory}
+                    onChange={(event) => setForm({ ...form, customCategory: event.target.value })}
+                    className="form-field"
+                    placeholder="Ej: comida, comida de perros, colegio"
+                  />
+                </Field>
+              )}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Monto"><input type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} className="form-field" placeholder="0.00" /></Field>
                 <Field label="Frecuencia">
