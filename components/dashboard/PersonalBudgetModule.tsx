@@ -11,11 +11,16 @@ import {
   Zap,
   AlertCircle,
   Calendar,
+  CheckCircle2,
   Plus,
   ArrowDownRight,
   ArrowUpRight,
   Building,
   Target,
+  Pencil,
+  Pause,
+  Play,
+  Trash2,
   X,
 } from 'lucide-react';
 import { TransactionModal } from './TransactionModal';
@@ -34,8 +39,22 @@ const initialGoalForm = {
   accountId: '',
 };
 
+const fixedCategories = ['Comida', 'Transporte', 'Gasolina', 'Telefono', 'Internet', 'Gimnasio', 'Suscripciones', 'Salidas', 'Familia', 'Pareja', 'Deudas personales', 'Salud', 'Otros'];
+const paymentMethods = ['Efectivo', 'Yappy', 'Transferencia', 'ACH', 'Tarjeta de credito'];
+const initialFixedExpenseForm = {
+  name: '',
+  amount: '',
+  frequency: 'Mensual',
+  dueDate: today,
+  category: 'Otros',
+  paymentMethod: '',
+  accountId: '',
+  notes: '',
+  isActive: true,
+};
+
 export function PersonalBudgetModule() {
-  const { accounts, transactions, protectedFunds, recurringExpenses, debts, businesses, transferFunds, createProtectedFund } = useStore();
+  const { accounts, transactions, protectedFunds, recurringExpenses, debts, businesses, transferFunds, createProtectedFund, createRecurringExpense, updateRecurringExpense, updateRecurringExpenseStatus, markRecurringExpensePaid, deleteRecurringExpense } = useStore();
   const [period, setPeriod] = useState('this_week');
   const [mode, setMode] = useState('balanced');
   const [view, setView] = useState('summary');
@@ -45,14 +64,25 @@ export function PersonalBudgetModule() {
   const [goalForm, setGoalForm] = useState(initialGoalForm);
   const [goalError, setGoalError] = useState('');
   const [savingGoal, setSavingGoal] = useState(false);
+  const [fixedModalOpen, setFixedModalOpen] = useState(false);
+  const [fixedForm, setFixedForm] = useState(initialFixedExpenseForm);
+  const [editingFixedId, setEditingFixedId] = useState<string | null>(null);
+  const [fixedError, setFixedError] = useState('');
+  const [savingFixed, setSavingFixed] = useState(false);
+  const [workingFixedId, setWorkingFixedId] = useState<string | null>(null);
 
   const personalAccounts = accounts.filter((account) => account.is_personal);
   const businessAccounts = accounts.filter((account) => !account.is_personal);
   const personalTransactions = transactions.filter((transaction) => transaction.scope === 'personal');
   const monthlyExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto' && isCurrentMonth(transaction.date)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
   const personalMoney = personalAccounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
-  const personalRecurring = recurringExpenses.filter((expense) => expense.scope === 'personal' && expense.status === 'active');
+  const personalFixedExpenses = recurringExpenses.filter((expense) => expense.scope === 'personal' || expense.owner_type === 'personal' || expense.business_unit_id === 'personal');
+  const personalRecurring = personalFixedExpenses.filter((expense) => expense.status === 'active' || expense.is_active);
   const personalRecurringTotal = personalRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
+  const pausedFixedExpenses = personalFixedExpenses.filter((expense) => expense.status === 'paused' || expense.is_active === false);
+  const upcomingPersonalFixed = [...personalRecurring].sort((a, b) => String(a.due_date || a.next_run_date).localeCompare(String(b.due_date || b.next_run_date)))[0];
+  const weeklyFixedPayments = personalRecurring.filter((expense) => isWithinDays(expense.due_date || expense.next_run_date, 7)).length;
+  const highestFixedCategory = highestCategory(personalRecurring);
   const personalDebts = debts.filter((debt) => (debt.category || '').toLowerCase().includes('personal') || !debt.category);
   const personalDebtMinimum = personalDebts.reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
   const personalSavings = protectedFunds.filter((fund) => fund.scope === 'personal' && fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
@@ -110,6 +140,111 @@ export function PersonalBudgetModule() {
       showToast({ type: 'error', title: 'No se pudo guardar', description: message });
     } finally {
       setSavingGoal(false);
+    }
+  };
+
+  const openFixedModal = (expense?: typeof personalFixedExpenses[number]) => {
+    if (expense) {
+      setEditingFixedId(expense.id);
+      setFixedForm({
+        name: expense.name,
+        amount: String(expense.amount || ''),
+        frequency: expense.frequency || 'Mensual',
+        dueDate: expense.due_date || expense.next_run_date || today,
+        category: expense.category || 'Otros',
+        paymentMethod: expense.payment_method || '',
+        accountId: expense.account_id || '',
+        notes: expense.notes || '',
+        isActive: expense.status !== 'paused' && expense.is_active !== false,
+      });
+    } else {
+      setEditingFixedId(null);
+      setFixedForm(initialFixedExpenseForm);
+    }
+    setFixedError('');
+    setFixedModalOpen(true);
+  };
+
+  const closeFixedModal = () => {
+    setFixedModalOpen(false);
+    setEditingFixedId(null);
+    setFixedForm(initialFixedExpenseForm);
+    setFixedError('');
+  };
+
+  const handleSaveFixedExpense = async () => {
+    setSavingFixed(true);
+    setFixedError('');
+    try {
+      const payload = {
+        name: fixedForm.name,
+        scope: 'personal' as const,
+        category: fixedForm.category,
+        amount: Number(fixedForm.amount),
+        frequency: fixedForm.frequency,
+        start_date: fixedForm.dueDate,
+        next_run_date: fixedForm.dueDate,
+        due_date: fixedForm.dueDate,
+        owner_type: 'personal' as const,
+        business_unit_id: 'personal',
+        is_required: true,
+        is_active: fixedForm.isActive,
+        payment_method: fixedForm.paymentMethod,
+        mode: 'reminder',
+        business_id: null,
+        account_id: fixedForm.accountId || null,
+        notes: fixedForm.notes,
+      };
+      if (editingFixedId) {
+        await updateRecurringExpense(editingFixedId, payload);
+        showToast({ type: 'success', title: 'Gasto fijo actualizado' });
+      } else {
+        await createRecurringExpense(payload);
+        showToast({ type: 'success', title: 'Gasto fijo personal creado' });
+      }
+      closeFixedModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo guardar el gasto fijo.';
+      setFixedError(message);
+      showToast({ type: 'error', title: 'No se pudo guardar', description: message });
+    } finally {
+      setSavingFixed(false);
+    }
+  };
+
+  const handleToggleFixed = async (expenseId: string, status: string) => {
+    setWorkingFixedId(expenseId);
+    try {
+      await updateRecurringExpenseStatus(expenseId, status === 'active' ? 'paused' : 'active');
+      showToast({ type: 'success', title: 'Gasto fijo actualizado' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo actualizar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingFixedId(null);
+    }
+  };
+
+  const handlePayFixed = async (expenseId: string) => {
+    setWorkingFixedId(expenseId);
+    try {
+      await markRecurringExpensePaid(expenseId);
+      showToast({ type: 'success', title: 'Gasto marcado como pagado', description: 'La proxima fecha fue actualizada.' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo marcar pagado', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingFixedId(null);
+    }
+  };
+
+  const handleDeleteFixed = async (expenseId: string) => {
+    setWorkingFixedId(expenseId);
+    try {
+      await deleteRecurringExpense(expenseId);
+      showToast({ type: 'success', title: 'Gasto fijo eliminado' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo eliminar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingFixedId(null);
     }
   };
 
@@ -181,6 +316,77 @@ export function PersonalBudgetModule() {
           <DistributionRow label="Uso libre estimado" value={estimatedFreeUse} tone="success" />
         </CardContent>
       </Card>
+
+      <section className="space-y-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-xl font-display font-semibold">Gastos fijos personales</h3>
+            <p className="text-sm text-muted-foreground">Administra pagos personales recurrentes sin salir de Finanzas Personales.</p>
+          </div>
+          <Button onClick={() => openFixedModal()} className="w-full md:w-auto">
+            <Plus className="mr-2 h-4 w-4" /> Nuevo gasto fijo personal
+          </Button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <MiniSummary label="Total mensual" value={money(personalRecurringTotal)} />
+          <MiniSummary label="Proximo pago" value={upcomingPersonalFixed ? money(Number(upcomingPersonalFixed.amount || 0)) : 'Sin pagos'} detail={upcomingPersonalFixed ? `${upcomingPersonalFixed.name} · ${upcomingPersonalFixed.due_date || upcomingPersonalFixed.next_run_date}` : undefined} />
+          <MiniSummary label="Esta semana" value={String(weeklyFixedPayments)} detail="pagos programados" />
+          <MiniSummary label="Categoria mas alta" value={highestFixedCategory?.name || 'Sin datos'} detail={highestFixedCategory ? money(highestFixedCategory.total) : undefined} />
+          <MiniSummary label="Activos" value={String(personalRecurring.length)} />
+          <MiniSummary label="Pausados" value={String(pausedFixedExpenses.length)} />
+        </div>
+
+        <Card>
+          <CardContent className="p-0">
+            {personalFixedExpenses.length > 0 ? (
+              <div className="divide-y divide-border/50">
+                {personalFixedExpenses.map((expense) => {
+                  const isActive = expense.status === 'active' || expense.is_active;
+                  return (
+                    <div key={expense.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-semibold">{expense.name}</p>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${isActive ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+                            {isActive ? 'Activo' : 'Pausado'}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {money(Number(expense.amount || 0))} · {expense.frequency} · {expense.category || 'Otros'} · Pago: {expense.due_date || expense.next_run_date}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">Metodo: {expense.payment_method || 'Sin metodo'}{expense.last_paid_date ? ` · Ultimo pago: ${expense.last_paid_date}` : ''}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 lg:justify-end">
+                        <Button variant="outline" size="sm" disabled={workingFixedId === expense.id} onClick={() => openFixedModal(expense)}>
+                          <Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar
+                        </Button>
+                        <Button variant="outline" size="sm" disabled={workingFixedId === expense.id} onClick={() => handlePayFixed(expense.id)}>
+                          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Pagar
+                        </Button>
+                        <Button variant="outline" size="sm" disabled={workingFixedId === expense.id} onClick={() => handleToggleFixed(expense.id, expense.status)}>
+                          {isActive ? <Pause className="mr-1.5 h-3.5 w-3.5" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
+                          {isActive ? 'Pausar' : 'Activar'}
+                        </Button>
+                        <Button variant="outline" size="sm" disabled={workingFixedId === expense.id} onClick={() => handleDeleteFixed(expense.id)} className="text-destructive hover:text-destructive">
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <EmptyState text="No tienes gastos fijos personales registrados todavia." />
+                <Button onClick={() => openFixedModal()} className="mt-4">
+                  <Plus className="mr-2 h-4 w-4" /> Crear primer gasto fijo personal
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       <Card className="border-l-4 border-l-blue-500 bg-blue-500/5 shadow-md">
         <CardContent className="p-6 flex items-start gap-4">
@@ -359,6 +565,75 @@ export function PersonalBudgetModule() {
         onTransfer={handleTransfer}
       />
 
+      {fixedModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+          <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
+              <div>
+                <CardTitle>{editingFixedId ? 'Editar gasto fijo personal' : 'Nuevo gasto fijo personal'}</CardTitle>
+                <CardDescription>Se guardara dentro de Finanzas Personales.</CardDescription>
+              </div>
+              <button onClick={closeFixedModal} className="rounded-xl p-1 text-muted-foreground hover:bg-muted"><X className="h-5 w-5" /></button>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-5">
+              <Field label="Nombre del gasto">
+                <input className="form-field" value={fixedForm.name} onChange={(event) => setFixedForm({ ...fixedForm, name: event.target.value })} placeholder="Ej: telefono, gasolina, comida" />
+              </Field>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Monto">
+                  <input className="form-field" type="number" min="0" step="0.01" value={fixedForm.amount} onChange={(event) => setFixedForm({ ...fixedForm, amount: event.target.value })} />
+                </Field>
+                <Field label="Frecuencia">
+                  <select className="form-field" value={fixedForm.frequency} onChange={(event) => setFixedForm({ ...fixedForm, frequency: event.target.value })}>
+                    <option value="Semanal">Semanal</option>
+                    <option value="Quincenal">Quincenal</option>
+                    <option value="Mensual">Mensual</option>
+                    <option value="Anual">Anual</option>
+                    <option value="Personalizado">Personalizado</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Fecha de pago">
+                  <input className="form-field" type="date" value={fixedForm.dueDate} onChange={(event) => setFixedForm({ ...fixedForm, dueDate: event.target.value })} />
+                </Field>
+                <Field label="Categoria">
+                  <select className="form-field" value={fixedForm.category} onChange={(event) => setFixedForm({ ...fixedForm, category: event.target.value })}>
+                    {fixedCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Metodo de pago">
+                  <select className="form-field" value={fixedForm.paymentMethod} onChange={(event) => setFixedForm({ ...fixedForm, paymentMethod: event.target.value })}>
+                    <option value="">Sin metodo</option>
+                    {paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}
+                  </select>
+                </Field>
+                <Field label="Cuenta asociada">
+                  <select className="form-field" value={fixedForm.accountId} onChange={(event) => setFixedForm({ ...fixedForm, accountId: event.target.value })}>
+                    <option value="">Opcional</option>
+                    {personalAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <label className="flex items-center gap-3 rounded-xl border border-border p-3 text-sm">
+                <input type="checkbox" checked={fixedForm.isActive} onChange={(event) => setFixedForm({ ...fixedForm, isActive: event.target.checked })} />
+                Activo
+              </label>
+              <Field label="Nota">
+                <input className="form-field" value={fixedForm.notes} onChange={(event) => setFixedForm({ ...fixedForm, notes: event.target.value })} placeholder="Opcional" />
+              </Field>
+              {fixedError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{fixedError}</div>}
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={closeFixedModal}>Cancelar</Button>
+              <Button onClick={handleSaveFixedExpense} disabled={savingFixed}>{savingFixed ? 'Guardando...' : 'Guardar gasto'}</Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
+
       {showGoalModal && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
           <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
@@ -405,6 +680,38 @@ function groupPersonalExpenses(transactions: Transaction[]) {
     totals.set(name, (totals.get(name) || 0) + Number(transaction.amount));
   });
   return Array.from(totals.entries()).map(([name, spent]) => ({ name, spent }));
+}
+
+function isWithinDays(dateValue: string | undefined, days: number) {
+  if (!dateValue) return false;
+  const date = new Date(dateValue);
+  const now = new Date();
+  const end = new Date();
+  end.setDate(now.getDate() + days);
+  return date >= new Date(now.toISOString().split('T')[0]) && date <= end;
+}
+
+function highestCategory(expenses: { category?: string; amount: number; frequency: string }[]) {
+  const totals = new Map<string, number>();
+  expenses.forEach((expense) => {
+    const name = expense.category || 'Otros';
+    totals.set(name, (totals.get(name) || 0) + monthlyCost(expense));
+  });
+  return Array.from(totals.entries())
+    .map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total)[0];
+}
+
+function MiniSummary({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <p className="mt-2 truncate text-lg font-bold">{value}</p>
+        {detail && <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>}
+      </CardContent>
+    </Card>
+  );
 }
 
 function Summary({ title, value, icon, tone, emphasized }: { title: string; value: number; icon: React.ReactNode; tone?: 'success' | 'destructive' | 'primary'; emphasized?: boolean }) {

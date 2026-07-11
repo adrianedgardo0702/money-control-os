@@ -66,10 +66,12 @@ export type RecurringExpense = {
   frequency: string;
   start_date: string;
   next_run_date: string;
+  owner_type?: 'personal' | 'business';
   business_unit_id?: string;
   due_date?: string;
   is_required?: boolean;
   is_active?: boolean;
+  last_paid_date?: string;
   payment_method?: string;
   mode: string;
   status: string;
@@ -190,16 +192,36 @@ type AppState = {
     frequency: string;
     start_date: string;
     next_run_date: string;
+    owner_type?: 'personal' | 'business';
     business_unit_id?: string | null;
     due_date?: string | null;
     is_required?: boolean;
     is_active?: boolean;
+    last_paid_date?: string | null;
     payment_method?: string;
     mode: string;
     business_id?: string | null;
     account_id?: string | null;
     notes?: string;
   }) => Promise<RecurringExpense>;
+  updateRecurringExpense: (id: string, input: {
+    name: string;
+    scope: 'personal' | 'negocio';
+    category: string;
+    amount: number;
+    frequency: string;
+    next_run_date: string;
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    due_date?: string | null;
+    is_active?: boolean;
+    payment_method?: string;
+    mode?: string;
+    business_id?: string | null;
+    account_id?: string | null;
+    notes?: string;
+  }) => Promise<RecurringExpense>;
+  markRecurringExpensePaid: (id: string) => Promise<void>;
   updateRecurringExpenseStatus: (id: string, status: string) => Promise<void>;
   deleteRecurringExpense: (id: string) => Promise<void>;
   upsertMonthlyTarget: (input: Omit<MonthlyTarget, 'id' | 'user_id'>) => Promise<MonthlyTarget>;
@@ -249,6 +271,30 @@ const parseMoney = (value: number) => {
     throw new Error('El monto debe ser mayor que cero.');
   }
   return amount;
+};
+
+const nextDateByFrequency = (dateValue: string, frequency: string) => {
+  const date = dateValue ? new Date(dateValue) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().split('T')[0];
+  switch (frequency) {
+    case 'Semanal':
+      date.setDate(date.getDate() + 7);
+      break;
+    case 'Quincenal':
+      date.setDate(date.getDate() + 15);
+      break;
+    case 'Anual':
+      date.setFullYear(date.getFullYear() + 1);
+      break;
+    case 'Diario':
+      date.setDate(date.getDate() + 1);
+      break;
+    case 'Mensual':
+    default:
+      date.setMonth(date.getMonth() + 1);
+      break;
+  }
+  return date.toISOString().split('T')[0];
 };
 
 export const useStore = create<AppState>((set, get) => ({
@@ -612,10 +658,12 @@ export const useStore = create<AppState>((set, get) => ({
       frequency: input.frequency,
       start_date: input.start_date,
       next_run_date: input.next_run_date,
+      owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
       business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
       due_date: input.due_date || input.next_run_date,
       is_required: input.is_required ?? true,
       is_active: input.is_active ?? true,
+      last_paid_date: input.last_paid_date || null,
       payment_method: input.payment_method?.trim() || null,
       mode: input.mode,
       status: input.is_active === false ? 'paused' : 'active',
@@ -663,17 +711,120 @@ export const useStore = create<AppState>((set, get) => ({
     await get().fetchInitialData();
     return expense;
   },
+  updateRecurringExpense: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const amount = Number(input.amount);
+    if (!name) throw new Error('El nombre del gasto fijo es obligatorio.');
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('El monto debe ser mayor que cero.');
+    if (!input.category.trim()) throw new Error('La categoria es obligatoria.');
+    if (!input.next_run_date) throw new Error('Selecciona la fecha de pago.');
+
+    const payload = {
+      name,
+      scope: input.scope,
+      category: input.category.trim(),
+      amount,
+      frequency: input.frequency,
+      next_run_date: input.next_run_date,
+      owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
+      business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
+      due_date: input.due_date || input.next_run_date,
+      is_active: input.is_active ?? true,
+      payment_method: input.payment_method?.trim() || null,
+      mode: input.mode || 'reminder',
+      status: input.is_active === false ? 'paused' : 'active',
+      business_id: input.scope === 'negocio' ? input.business_id : null,
+      account_id: input.account_id || null,
+      notes: input.notes?.trim() || null
+    };
+
+    const { data, error } = await client
+      .from('recurring_expenses')
+      .update(payload)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      const legacyPayload = {
+        name: payload.name,
+        scope: payload.scope,
+        category: payload.category,
+        amount: payload.amount,
+        frequency: payload.frequency,
+        next_run_date: payload.next_run_date,
+        payment_method: payload.payment_method,
+        mode: payload.mode,
+        status: payload.status,
+        business_id: payload.business_id,
+        account_id: payload.account_id,
+        notes: payload.notes
+      };
+      const { data: legacyData, error: legacyError } = await client
+        .from('recurring_expenses')
+        .update(legacyPayload)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const expense = legacyData as RecurringExpense;
+      set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? expense : item) });
+      await get().fetchInitialData();
+      return expense;
+    }
+
+    const expense = data as RecurringExpense;
+    set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? expense : item) });
+    await get().fetchInitialData();
+    return expense;
+  },
+  markRecurringExpensePaid: async (id) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const expense = get().recurringExpenses.find((item) => item.id === id);
+    if (!expense) throw new Error('No se encontro el gasto fijo.');
+    const paidDate = new Date().toISOString().split('T')[0];
+    const nextDate = nextDateByFrequency(expense.due_date || expense.next_run_date, expense.frequency);
+    const payload = {
+      last_paid_date: paidDate,
+      next_run_date: nextDate,
+      due_date: nextDate,
+      status: 'active',
+      is_active: true
+    };
+    const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
+    if (error) {
+      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: nextDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+    }
+    set({
+      recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item)
+    });
+    await get().fetchInitialData();
+  },
   updateRecurringExpenseStatus: async (id, status) => {
     const client = requireSupabase();
     const user = requireSignedUser(get().user);
+    const payload = { status, is_active: status === 'active' };
     const { error } = await client
       .from('recurring_expenses')
-      .update({ status })
+      .update(payload)
       .eq('id', id)
       .eq('user_id', user.id);
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      const { error: legacyError } = await client
+        .from('recurring_expenses')
+        .update({ status })
+        .eq('id', id)
+        .eq('user_id', user.id);
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+    }
     set({
-      recurringExpenses: get().recurringExpenses.map((expense) => expense.id === id ? { ...expense, status } : expense)
+      recurringExpenses: get().recurringExpenses.map((expense) => expense.id === id ? { ...expense, status, is_active: status === 'active' } : expense)
     });
     await get().fetchInitialData();
   },

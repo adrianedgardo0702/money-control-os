@@ -2,13 +2,16 @@
 -- It is non-destructive: it adds planning columns/tables without deleting existing data.
 
 ALTER TABLE public.recurring_expenses
+  ADD COLUMN IF NOT EXISTS owner_type TEXT DEFAULT 'personal',
   ADD COLUMN IF NOT EXISTS business_unit_id TEXT,
   ADD COLUMN IF NOT EXISTS due_date DATE,
   ADD COLUMN IF NOT EXISTS is_required BOOLEAN DEFAULT true,
-  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true,
+  ADD COLUMN IF NOT EXISTS last_paid_date DATE;
 
 UPDATE public.recurring_expenses
 SET
+  owner_type = COALESCE(owner_type, CASE WHEN scope = 'personal' THEN 'personal' ELSE 'business' END),
   business_unit_id = COALESCE(business_unit_id, CASE WHEN scope = 'personal' THEN 'personal' ELSE COALESCE(business_id::TEXT, 'shared') END),
   due_date = COALESCE(due_date, next_run_date),
   is_required = COALESCE(is_required, true),
