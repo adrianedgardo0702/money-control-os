@@ -45,6 +45,8 @@ export type ProtectedFund = {
   user_id?: string;
   name: string;
   scope: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string;
   fund_type: string;
   amount: number;
   priority: string;
@@ -82,9 +84,13 @@ export type RecurringExpense = {
 
 export type Debt = {
   id: string;
+  user_id?: string;
   name: string;
   type: string;
   category?: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string;
+  business_id?: string;
   original_amount: number;
   pending: number;
   paid: number;
@@ -95,6 +101,7 @@ export type Debt = {
   status?: string;
   risk?: string;
   recommendation?: string;
+  notes?: string;
 };
 
 export type MonthlyTarget = {
@@ -174,11 +181,28 @@ type AppState = {
   createProtectedFund: (input: {
     name: string;
     scope: 'personal' | 'negocio';
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
     fund_type: string;
     amount: number;
     priority: string;
     target_date?: string;
     block_withdrawals: boolean;
+    business_id?: string | null;
+    account_id?: string | null;
+    notes?: string;
+  }) => Promise<ProtectedFund>;
+  updateProtectedFund: (id: string, input: {
+    name: string;
+    scope: 'personal' | 'negocio';
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    fund_type: string;
+    amount: number;
+    priority: string;
+    target_date?: string;
+    block_withdrawals: boolean;
+    status?: string;
     business_id?: string | null;
     account_id?: string | null;
     notes?: string;
@@ -230,6 +254,9 @@ type AppState = {
     name: string;
     type: string;
     category?: string;
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    business_id?: string | null;
     original_amount: number;
     pending: number;
     paid?: number;
@@ -240,7 +267,29 @@ type AppState = {
     status?: string;
     risk?: string;
     recommendation?: string;
+    notes?: string;
   }) => Promise<Debt>;
+  updateDebt: (id: string, input: {
+    name: string;
+    type: string;
+    category?: string;
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    business_id?: string | null;
+    original_amount: number;
+    pending: number;
+    paid?: number;
+    minimum?: number;
+    due_date?: string;
+    interest?: number;
+    priority?: string;
+    status?: string;
+    risk?: string;
+    recommendation?: string;
+    notes?: string;
+  }) => Promise<Debt>;
+  registerDebtPayment: (id: string, amount: number) => Promise<void>;
+  deleteDebt: (id: string) => Promise<void>;
 };
 
 const getErrorMessage = (error: unknown) => {
@@ -612,6 +661,8 @@ export const useStore = create<AppState>((set, get) => ({
         user_id: user.id,
         name,
         scope: input.scope,
+        owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
+        business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || null),
         fund_type: input.fund_type,
         amount,
         priority: input.priority,
@@ -625,9 +676,100 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      const { data: legacyData, error: legacyError } = await client
+        .from('protected_funds')
+        .insert({
+          user_id: user.id,
+          name,
+          scope: input.scope,
+          fund_type: input.fund_type,
+          amount,
+          priority: input.priority,
+          target_date: input.target_date || null,
+          block_withdrawals: input.block_withdrawals,
+          status: 'active',
+          business_id: input.scope === 'negocio' ? input.business_id : null,
+          account_id: input.account_id || null,
+          notes: input.notes?.trim() || null
+        })
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const fund = legacyData as ProtectedFund;
+      set({ protectedFunds: [...get().protectedFunds, fund] });
+      await get().fetchInitialData();
+      return fund;
+    }
     const fund = data as ProtectedFund;
     set({ protectedFunds: [...get().protectedFunds, fund] });
+    await get().fetchInitialData();
+    return fund;
+  },
+  updateProtectedFund: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const amount = Number(input.amount);
+    if (!name) throw new Error('El nombre de la reserva es obligatorio.');
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('El monto debe ser mayor que cero.');
+    if (!input.fund_type) throw new Error('Selecciona el tipo de reserva.');
+    if (input.scope === 'negocio' && !input.business_id) throw new Error('Selecciona el negocio de esta reserva.');
+
+    const payload = {
+      name,
+      scope: input.scope,
+      owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
+      business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || null),
+      fund_type: input.fund_type,
+      amount,
+      priority: input.priority,
+      target_date: input.target_date || null,
+      block_withdrawals: input.block_withdrawals,
+      status: input.status || 'active',
+      business_id: input.scope === 'negocio' ? input.business_id : null,
+      account_id: input.account_id || null,
+      notes: input.notes?.trim() || null
+    };
+
+    const { data, error } = await client
+      .from('protected_funds')
+      .update(payload)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      const legacyPayload = {
+        name: payload.name,
+        scope: payload.scope,
+        fund_type: payload.fund_type,
+        amount: payload.amount,
+        priority: payload.priority,
+        target_date: payload.target_date,
+        block_withdrawals: payload.block_withdrawals,
+        status: payload.status,
+        business_id: payload.business_id,
+        account_id: payload.account_id,
+        notes: payload.notes
+      };
+      const { data: legacyData, error: legacyError } = await client
+        .from('protected_funds')
+        .update(legacyPayload)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const fund = legacyData as ProtectedFund;
+      set({ protectedFunds: get().protectedFunds.map((item) => item.id === id ? fund : item) });
+      await get().fetchInitialData();
+      return fund;
+    }
+
+    const fund = data as ProtectedFund;
+    set({ protectedFunds: get().protectedFunds.map((item) => item.id === id ? fund : item) });
     await get().fetchInitialData();
     return fund;
   },
@@ -907,6 +1049,9 @@ export const useStore = create<AppState>((set, get) => ({
         name,
         type: input.type.trim(),
         category: input.category?.trim() || null,
+        owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
+        business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
+        business_id: input.business_id || null,
         original_amount: originalAmount,
         pending,
         paid: Number(input.paid || 0),
@@ -916,15 +1061,139 @@ export const useStore = create<AppState>((set, get) => ({
         priority: input.priority || 'Media',
         status: input.status || 'Al dia',
         risk: input.risk || 'Medio',
-        recommendation: input.recommendation?.trim() || null
+        recommendation: input.recommendation?.trim() || input.notes?.trim() || null,
+        notes: input.notes?.trim() || null
       })
       .select('*')
       .single();
 
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      const { data: legacyData, error: legacyError } = await client
+        .from('debts')
+        .insert({
+          user_id: user.id,
+          name,
+          type: input.type.trim(),
+          category: input.category?.trim() || null,
+          original_amount: originalAmount,
+          pending,
+          paid: Number(input.paid || 0),
+          minimum: Number(input.minimum || 0),
+          due_date: input.due_date || null,
+          interest: Number(input.interest || 0),
+          priority: input.priority || 'Media',
+          status: input.status || 'Al dia',
+          risk: input.risk || 'Medio',
+          recommendation: input.recommendation?.trim() || input.notes?.trim() || null
+        })
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const debt = legacyData as Debt;
+      set({ debts: [...get().debts, debt] });
+      await get().fetchInitialData();
+      return debt;
+    }
     const debt = data as Debt;
     set({ debts: [...get().debts, debt] });
     await get().fetchInitialData();
     return debt;
+  },
+  updateDebt: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const originalAmount = parseMoney(input.original_amount);
+    const pending = Number(input.pending);
+    if (!name) throw new Error('El nombre de la deuda es obligatorio.');
+    if (!input.type.trim()) throw new Error('El tipo de deuda es obligatorio.');
+    if (!Number.isFinite(pending) || pending < 0) throw new Error('El saldo pendiente no es valido.');
+
+    const payload = {
+      name,
+      type: input.type.trim(),
+      category: input.category?.trim() || null,
+      owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
+      business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
+      business_id: input.business_id || null,
+      original_amount: originalAmount,
+      pending,
+      paid: Number(input.paid || 0),
+      minimum: Number(input.minimum || 0),
+      due_date: input.due_date || null,
+      interest: Number(input.interest || 0),
+      priority: input.priority || 'Media',
+      status: input.status || (pending <= 0 ? 'Pagada' : 'Al dia'),
+      risk: input.risk || 'Medio',
+      recommendation: input.recommendation?.trim() || input.notes?.trim() || null,
+      notes: input.notes?.trim() || null
+    };
+
+    const { data, error } = await client
+      .from('debts')
+      .update(payload)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      const legacyPayload = {
+        name: payload.name,
+        type: payload.type,
+        category: payload.category,
+        original_amount: payload.original_amount,
+        pending: payload.pending,
+        paid: payload.paid,
+        minimum: payload.minimum,
+        due_date: payload.due_date,
+        interest: payload.interest,
+        priority: payload.priority,
+        status: payload.status,
+        risk: payload.risk,
+        recommendation: payload.recommendation
+      };
+      const { data: legacyData, error: legacyError } = await client
+        .from('debts')
+        .update(legacyPayload)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const debt = legacyData as Debt;
+      set({ debts: get().debts.map((item) => item.id === id ? debt : item) });
+      await get().fetchInitialData();
+      return debt;
+    }
+
+    const debt = data as Debt;
+    set({ debts: get().debts.map((item) => item.id === id ? debt : item) });
+    await get().fetchInitialData();
+    return debt;
+  },
+  registerDebtPayment: async (id, amountValue) => {
+    const debt = get().debts.find((item) => item.id === id);
+    if (!debt) throw new Error('No se encontro la deuda.');
+    const amount = parseMoney(amountValue);
+    const nextPaid = Number(debt.paid || 0) + amount;
+    const nextPending = Math.max(0, Number(debt.pending || 0) - amount);
+    await get().updateDebt(id, {
+      ...debt,
+      original_amount: Number(debt.original_amount || 0),
+      pending: nextPending,
+      paid: nextPaid,
+      minimum: Number(debt.minimum || 0),
+      interest: Number(debt.interest || 0),
+      status: nextPending <= 0 ? 'Pagada' : debt.status || 'Al dia'
+    });
+  },
+  deleteDebt: async (id) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const { error } = await client.from('debts').delete().eq('id', id).eq('user_id', user.id);
+    if (error) throw new Error(getErrorMessage(error));
+    set({ debts: get().debts.filter((debt) => debt.id !== id) });
+    await get().fetchInitialData();
   }
 }));

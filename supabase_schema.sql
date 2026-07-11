@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS public.protected_funds (
     account_id UUID REFERENCES public.accounts(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     scope TEXT NOT NULL,
+    owner_type TEXT DEFAULT 'personal',
+    business_unit_id TEXT,
     fund_type TEXT NOT NULL,
     amount NUMERIC(12, 2) NOT NULL,
     priority TEXT NOT NULL,
@@ -120,6 +122,9 @@ CREATE TABLE IF NOT EXISTS public.debts (
     name TEXT NOT NULL,
     type TEXT NOT NULL,
     category TEXT,
+    owner_type TEXT DEFAULT 'personal',
+    business_unit_id TEXT,
+    business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
     original_amount NUMERIC(12, 2) NOT NULL,
     pending NUMERIC(12, 2) NOT NULL,
     paid NUMERIC(12, 2) DEFAULT 0,
@@ -130,6 +135,7 @@ CREATE TABLE IF NOT EXISTS public.debts (
     status TEXT,
     risk TEXT,
     recommendation TEXT,
+    notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -144,11 +150,14 @@ CREATE INDEX IF NOT EXISTS transactions_account_id_idx ON public.transactions (a
 CREATE INDEX IF NOT EXISTS transactions_date_idx ON public.transactions (date DESC);
 CREATE INDEX IF NOT EXISTS protected_funds_user_id_idx ON public.protected_funds (user_id);
 CREATE INDEX IF NOT EXISTS protected_funds_business_id_idx ON public.protected_funds (business_id);
+CREATE INDEX IF NOT EXISTS protected_funds_business_unit_id_idx ON public.protected_funds (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_user_id_idx ON public.recurring_expenses (user_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_next_run_date_idx ON public.recurring_expenses (next_run_date);
 CREATE INDEX IF NOT EXISTS recurring_expenses_business_unit_id_idx ON public.recurring_expenses (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_expenses (is_active);
 CREATE INDEX IF NOT EXISTS debts_user_id_idx ON public.debts (user_id);
+CREATE INDEX IF NOT EXISTS debts_business_unit_id_idx ON public.debts (business_unit_id);
+CREATE INDEX IF NOT EXISTS debts_business_id_idx ON public.debts (business_id);
 CREATE INDEX IF NOT EXISTS monthly_targets_user_id_idx ON public.monthly_targets (user_id);
 CREATE INDEX IF NOT EXISTS business_target_weights_user_id_idx ON public.business_target_weights (user_id);
 CREATE INDEX IF NOT EXISTS business_target_weights_business_unit_id_idx ON public.business_target_weights (business_unit_id);

@@ -23,7 +23,7 @@ export function BusinessesModule({ onNavigate }: BusinessesModuleProps = {}) {
   void onNavigate;
   const { businesses, transactions, accounts, createBusiness } = useStore();
   const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
-  const [modalConfig, setModalConfig] = useState<{ isOpen: boolean; type: 'ingreso' | 'gasto' }>({ isOpen: false, type: 'ingreso' });
+  const [modalConfig, setModalConfig] = useState<{ isOpen: boolean; type: 'ingreso' | 'gasto'; businessId?: string }>({ isOpen: false, type: 'ingreso' });
   const [showBusinessModal, setShowBusinessModal] = useState(false);
   const [businessForm, setBusinessForm] = useState(initialBusinessForm);
   const [businessError, setBusinessError] = useState('');
@@ -133,10 +133,10 @@ export function BusinessesModule({ onNavigate }: BusinessesModuleProps = {}) {
                   <Button variant="secondary" className="flex-1 text-xs h-8" onClick={() => setSelectedBusinessId(business.id)}>
                     <Eye className="w-3 h-3 mr-2" /> Ver detalle
                   </Button>
-                  <Button variant="outline" className="flex-1 text-xs h-8 text-success hover:text-success hover:bg-success/10" onClick={() => setModalConfig({ isOpen: true, type: 'ingreso' })}>
+                  <Button variant="outline" className="flex-1 text-xs h-8 text-success hover:text-success hover:bg-success/10" onClick={() => setModalConfig({ isOpen: true, type: 'ingreso', businessId: business.id })}>
                     + Ingreso
                   </Button>
-                  <Button variant="outline" className="flex-1 text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setModalConfig({ isOpen: true, type: 'gasto' })}>
+                  <Button variant="outline" className="flex-1 text-xs h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setModalConfig({ isOpen: true, type: 'gasto', businessId: business.id })}>
                     - Gasto
                   </Button>
                 </CardFooter>
@@ -169,14 +169,17 @@ export function BusinessesModule({ onNavigate }: BusinessesModuleProps = {}) {
         business={selectedBusiness}
         isOpen={Boolean(selectedBusiness)}
         onClose={() => setSelectedBusinessId(null)}
-        onRegisterIncome={() => setModalConfig({ isOpen: true, type: 'ingreso' })}
-        onRegisterExpense={() => setModalConfig({ isOpen: true, type: 'gasto' })}
+        onRegisterIncome={() => selectedBusiness && setModalConfig({ isOpen: true, type: 'ingreso', businessId: selectedBusiness.id })}
+        onRegisterExpense={() => selectedBusiness && setModalConfig({ isOpen: true, type: 'gasto', businessId: selectedBusiness.id })}
       />
 
       <TransactionModal
+        key={`${modalConfig.type}-${modalConfig.businessId || 'manual'}-${modalConfig.isOpen ? 'open' : 'closed'}`}
         isOpen={modalConfig.isOpen}
         type={modalConfig.type}
         onClose={() => setModalConfig({ ...modalConfig, isOpen: false })}
+        defaultScope={modalConfig.businessId ? 'negocio' : undefined}
+        defaultBusinessId={modalConfig.businessId}
       />
 
       {showBusinessModal && (

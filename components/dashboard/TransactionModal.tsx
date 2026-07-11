@@ -12,6 +12,7 @@ interface TransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultScope?: 'personal' | 'negocio';
+  defaultBusinessId?: string;
 }
 
 const initialFormData = {
@@ -24,29 +25,30 @@ const initialFormData = {
   notes: '',
 };
 
-const getInitialFormData = (defaultScope?: 'personal' | 'negocio') => ({
+const getInitialFormData = (defaultScope?: 'personal' | 'negocio', defaultBusinessId?: string) => ({
   ...initialFormData,
   scope: defaultScope || initialFormData.scope,
-  businessId: defaultScope === 'personal' ? '' : initialFormData.businessId,
+  businessId: defaultScope === 'personal' ? '' : defaultBusinessId || initialFormData.businessId,
 });
 
-const getInitialStep = (defaultScope?: 'personal' | 'negocio') => {
+const getInitialStep = (defaultScope?: 'personal' | 'negocio', defaultBusinessId?: string) => {
   if (defaultScope === 'personal') return 3;
+  if (defaultScope === 'negocio' && defaultBusinessId) return 3;
   if (defaultScope === 'negocio') return 2;
   return 1;
 };
 
-export function TransactionModal({ type, isOpen, onClose, defaultScope }: TransactionModalProps) {
-  const [step, setStep] = useState(() => getInitialStep(defaultScope));
+export function TransactionModal({ type, isOpen, onClose, defaultScope, defaultBusinessId }: TransactionModalProps) {
+  const [step, setStep] = useState(() => getInitialStep(defaultScope, defaultBusinessId));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [formData, setFormData] = useState(() => getInitialFormData(defaultScope));
+  const [formData, setFormData] = useState(() => getInitialFormData(defaultScope, defaultBusinessId));
   const { businesses, accounts, protectedFunds, createTransaction } = useStore();
 
   const handleClose = () => {
-    setStep(getInitialStep(defaultScope));
+    setStep(getInitialStep(defaultScope, defaultBusinessId));
     setError('');
-    setFormData(getInitialFormData(defaultScope));
+    setFormData(getInitialFormData(defaultScope, defaultBusinessId));
     onClose();
   };
 
@@ -175,7 +177,7 @@ export function TransactionModal({ type, isOpen, onClose, defaultScope }: Transa
                   </div>
                 )}
                 <div className="flex gap-3 justify-end pt-4">
-                  <Button variant="ghost" onClick={() => setStep(formData.scope === 'negocio' ? 2 : 1)}>Atras</Button>
+                  <Button variant="ghost" onClick={() => setStep(formData.scope === 'negocio' && !defaultBusinessId ? 2 : 1)}>Atras</Button>
                   <Button onClick={() => setStep(4)} disabled={!formData.amount || Number(formData.amount) <= 0}>Siguiente</Button>
                 </div>
               </div>

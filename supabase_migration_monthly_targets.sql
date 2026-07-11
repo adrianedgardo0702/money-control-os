@@ -18,6 +18,22 @@ SET
   is_active = COALESCE(is_active, status = 'active')
 WHERE business_unit_id IS NULL OR due_date IS NULL OR is_required IS NULL OR is_active IS NULL;
 
+ALTER TABLE public.protected_funds
+  ADD COLUMN IF NOT EXISTS owner_type TEXT DEFAULT 'personal',
+  ADD COLUMN IF NOT EXISTS business_unit_id TEXT;
+
+UPDATE public.protected_funds
+SET
+  owner_type = COALESCE(owner_type, CASE WHEN scope = 'personal' THEN 'personal' ELSE 'business' END),
+  business_unit_id = COALESCE(business_unit_id, CASE WHEN scope = 'personal' THEN 'personal' ELSE business_id::TEXT END)
+WHERE business_unit_id IS NULL OR owner_type IS NULL;
+
+ALTER TABLE public.debts
+  ADD COLUMN IF NOT EXISTS owner_type TEXT DEFAULT 'personal',
+  ADD COLUMN IF NOT EXISTS business_unit_id TEXT,
+  ADD COLUMN IF NOT EXISTS business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
+  ADD COLUMN IF NOT EXISTS notes TEXT;
+
 CREATE TABLE IF NOT EXISTS public.monthly_targets (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL UNIQUE,
@@ -47,6 +63,9 @@ CREATE INDEX IF NOT EXISTS business_target_weights_user_id_idx ON public.busines
 CREATE INDEX IF NOT EXISTS business_target_weights_business_unit_id_idx ON public.business_target_weights (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_business_unit_id_idx ON public.recurring_expenses (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_expenses (is_active);
+CREATE INDEX IF NOT EXISTS protected_funds_business_unit_id_idx ON public.protected_funds (business_unit_id);
+CREATE INDEX IF NOT EXISTS debts_business_unit_id_idx ON public.debts (business_unit_id);
+CREATE INDEX IF NOT EXISTS debts_business_id_idx ON public.debts (business_id);
 
 ALTER TABLE public.monthly_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_target_weights ENABLE ROW LEVEL SECURITY;
