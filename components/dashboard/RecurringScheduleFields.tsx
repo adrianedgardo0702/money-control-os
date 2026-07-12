@@ -24,7 +24,7 @@ type Props = {
 
 export const defaultScheduleForm: RecurringScheduleForm = {
   frequency: 'Mensual',
-  dueDate: new Date().toISOString().slice(0, 10),
+  dueDate: formatLocalDateKey(new Date()),
   weekdays: ['monday'],
   recurrenceType: 'fixed_month_days',
   monthDays: [15],
@@ -48,17 +48,30 @@ export function scheduleFormFromExpense(expense: Partial<RecurringScheduleForm> 
   interval_type?: string;
 }): RecurringScheduleForm {
   const date = expense.next_due_date || expense.due_date || expense.next_run_date || defaultScheduleForm.dueDate;
+  const parsedDate = parseLocalDateKey(date);
   return {
     frequency: expense.frequency || 'Mensual',
     dueDate: date,
     weekdays: expense.weekdays && expense.weekdays.length > 0 ? expense.weekdays : ['monday'],
     recurrenceType: expense.recurrence_type || 'fixed_month_days',
     monthDays: expense.month_days && expense.month_days.length > 0 ? expense.month_days : [15],
-    annualMonth: String(expense.annual_month || new Date(date).getMonth() + 1),
-    annualDay: String(expense.annual_day || new Date(date).getDate()),
+    annualMonth: String(expense.annual_month || parsedDate.getMonth() + 1),
+    annualDay: String(expense.annual_day || parsedDate.getDate()),
     intervalNumber: String(expense.interval_number || 1),
     intervalType: expense.interval_type || 'days',
   };
+}
+
+function parseLocalDateKey(value: string) {
+  const [year, month, day] = value.split('T')[0].split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function formatLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function buildSchedulePayload(form: RecurringScheduleForm, amount: number) {

@@ -31,7 +31,7 @@ import { calculateNextDueDate, generateDueDates } from '@/lib/recurrence';
 import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const today = new Date().toISOString().split('T')[0];
+const today = formatDateKey(new Date());
 
 const initialGoalForm = {
   name: '',
@@ -1283,7 +1283,7 @@ function isWithinDays(dateValue: string | undefined, days: number) {
   const now = new Date();
   const end = new Date();
   end.setDate(now.getDate() + days);
-  return date >= new Date(now.toISOString().split('T')[0]) && date <= end;
+  return date >= parseLocalDate(formatDateKey(now)) && date <= end;
 }
 
 function parseLocalDate(value: string) {

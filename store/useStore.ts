@@ -440,6 +440,13 @@ const addOneDay = (dateKey: string) => {
   return date;
 };
 
+const formatDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const hasRecurringSchedule = (expense: RecurringExpense) => {
   const frequency = String(expense.frequency || '').toLowerCase();
   if (['weekly', 'semanal'].includes(frequency)) return Boolean(expense.weekdays?.length || expense.start_date);
@@ -1071,7 +1078,7 @@ export const useStore = create<AppState>((set, get) => ({
     const user = requireSignedUser(get().user);
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
-    const paidDate = new Date().toISOString().split('T')[0];
+    const paidDate = formatDateKey(new Date());
     const dueDate = dueDateOverride || calculateExpenseDueDate(expense);
     const fromDate = addOneDay(dueDate);
     const nextDate = calculateNextDueDate({
