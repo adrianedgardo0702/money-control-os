@@ -4,7 +4,7 @@ const path = require('path');
 
 const root = path.join(process.cwd(), 'out');
 const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || process.env.HOSTNAME || '0.0.0.0';
+const host = process.env.HOST || '0.0.0.0';
 
 const types = {
   '.css': 'text/css; charset=utf-8',
