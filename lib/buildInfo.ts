@@ -1,4 +1,4 @@
 export const buildInfo = {
-  version: '2026.07.11-contextos-final',
-  label: 'Contextos + inversiones + onboarding',
+  version: '2026.07.12-auditoria-contextos',
+  label: 'Auditoria de navegacion y acciones personales',
 };

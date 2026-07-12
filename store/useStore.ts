@@ -179,6 +179,7 @@ type AppState = {
     business_id?: string;
     status?: string;
   }) => Promise<Account>;
+  deleteAccount: (id: string) => Promise<void>;
   createTransaction: (input: {
     type: 'ingreso' | 'gasto';
     scope: 'personal' | 'negocio';
@@ -580,6 +581,14 @@ export const useStore = create<AppState>((set, get) => ({
     set({ accounts: get().accounts.map((item) => item.id === id ? account : item) });
     await get().fetchInitialData();
     return account;
+  },
+  deleteAccount: async (id) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const { error } = await client.from('accounts').delete().eq('id', id).eq('user_id', user.id);
+    if (error) throw new Error(getErrorMessage(error));
+    set({ accounts: get().accounts.filter((account) => account.id !== id) });
+    await get().fetchInitialData();
   },
   createTransaction: async (input) => {
     const client = requireSupabase();
