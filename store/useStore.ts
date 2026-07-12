@@ -478,6 +478,30 @@ const calculateExpenseDueDate = (expense: RecurringExpense, fromDate = new Date(
   }, fromDate);
 };
 
+const legacyRecurringExpenseColumns = [
+  'user_id',
+  'name',
+  'scope',
+  'category',
+  'amount',
+  'frequency',
+  'start_date',
+  'next_run_date',
+  'mode',
+  'status',
+  'business_id',
+  'account_id',
+  'notes',
+];
+
+const toLegacyRecurringExpensePayload = (payload: Record<string, unknown>) =>
+  Object.fromEntries(legacyRecurringExpenseColumns.filter((key) => key in payload).map((key) => [key, payload[key]]));
+
+const isMissingSchemaColumnError = (error: unknown) => {
+  const message = getErrorMessage(error);
+  return message.includes('Could not find the') && message.includes('column') && message.includes('schema cache');
+};
+
 export const useStore = create<AppState>((set, get) => ({
   user: null,
   businesses: [],
@@ -999,8 +1023,19 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) throw new Error(`Supabase recurring_expenses insert: ${getErrorMessage(error)}`);
-    const expense = data as RecurringExpense;
+    let savedData = data;
+    if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(`Supabase recurring_expenses insert: ${getErrorMessage(error)}`);
+      const { data: legacyData, error: legacyError } = await client
+        .from('recurring_expenses')
+        .insert(toLegacyRecurringExpensePayload(payload))
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(`Supabase recurring_expenses insert: ${getErrorMessage(legacyError)}`);
+      savedData = legacyData;
+    }
+
+    const expense = { ...payload, ...(savedData as object) } as RecurringExpense;
     set({ recurringExpenses: [...get().recurringExpenses, expense] });
     await get().fetchInitialData();
     return expense;
@@ -1066,9 +1101,21 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
+    let savedData = data;
+    if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
+      const { data: legacyData, error: legacyError } = await client
+        .from('recurring_expenses')
+        .update(toLegacyRecurringExpensePayload(payload))
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(legacyError)}`);
+      savedData = legacyData;
+    }
 
-    const expense = data as RecurringExpense;
+    const expense = { ...payload, ...(savedData as object) } as RecurringExpense;
     set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? expense : item) });
     await get().fetchInitialData();
     return expense;
