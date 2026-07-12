@@ -25,8 +25,9 @@ import {
 import { TransactionModal } from './TransactionModal';
 import { TransferModal } from './TransferModal';
 import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
-import { Account, Debt, useStore, Transaction } from '@/store/useStore';
+import { Account, Debt, RecurringExpense, RecurringExpensePayment, useStore, Transaction } from '@/store/useStore';
 import { defaultMonthlyTarget, monthlyCost } from '@/lib/financePlanning';
+import { generateDueDates } from '@/lib/recurrence';
 import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -91,6 +92,7 @@ export function PersonalBudgetModule() {
     transactions,
     protectedFunds,
     recurringExpenses,
+    recurringExpensePayments,
     debts,
     businesses,
     monthlyTarget,
@@ -102,6 +104,8 @@ export function PersonalBudgetModule() {
     updateRecurringExpense,
     updateRecurringExpenseStatus,
     markRecurringExpensePaid,
+    postponeRecurringExpensePayment,
+    skipRecurringExpensePayment,
     deleteRecurringExpense,
     createDebt,
     updateDebt,
@@ -146,6 +150,8 @@ export function PersonalBudgetModule() {
   const [budgetDraft, setBudgetDraft] = useState('');
   const [budgetError, setBudgetError] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
+  const [postponeTarget, setPostponeTarget] = useState<{ expenseId: string; dueDate: string; name: string } | null>(null);
+  const [customPostponeDate, setCustomPostponeDate] = useState('');
 
   const personalAccounts = accounts.filter((account) => account.is_personal);
   const personalCards = personalAccounts.filter((account) => account.type.toLowerCase().includes('tarjeta'));
@@ -155,6 +161,10 @@ export function PersonalBudgetModule() {
   const personalMoney = personalAccounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const personalFixedExpenses = recurringExpenses.filter((expense) => expense.scope === 'personal' || expense.owner_type === 'personal' || expense.business_unit_id === 'personal');
   const personalRecurring = personalFixedExpenses.filter((expense) => expense.status === 'active' || expense.is_active);
+  const personalPaymentOccurrences = buildPersonalPaymentOccurrences(personalFixedExpenses, recurringExpensePayments);
+  const paymentStats = buildPaymentStats(personalPaymentOccurrences, recurringExpensePayments);
+  const paymentGroups = groupPaymentOccurrences(personalPaymentOccurrences);
+  const paymentAlerts = buildPaymentAlerts(paymentStats, personalPaymentOccurrences);
   const personalRecurringTotal = personalRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
   const pausedFixedExpenses = personalFixedExpenses.filter((expense) => expense.status === 'paused' || expense.is_active === false);
   const upcomingPersonalFixed = [...personalRecurring].sort((a, b) => String(a.next_due_date || a.due_date || a.next_run_date).localeCompare(String(b.next_due_date || b.due_date || b.next_run_date)))[0];
@@ -336,13 +346,42 @@ export function PersonalBudgetModule() {
     }
   };
 
-  const handlePayFixed = async (expenseId: string) => {
+  const handlePayFixed = async (expenseId: string, dueDate?: string) => {
     setWorkingFixedId(expenseId);
     try {
-      await markRecurringExpensePaid(expenseId);
-      showToast({ type: 'success', title: 'Gasto marcado como pagado', description: 'La proxima fecha fue actualizada.' });
+      await markRecurringExpensePaid(expenseId, dueDate);
+      showToast({ type: 'success', title: 'Pago registrado correctamente.', description: 'La proxima fecha fue actualizada.' });
     } catch (error) {
       showToast({ type: 'error', title: 'No se pudo marcar pagado', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingFixedId(null);
+    }
+  };
+
+  const handlePostponeFixed = async (days?: number, customDate?: string) => {
+    if (!postponeTarget) return;
+    const targetDate = customDate || addDaysString(today, days || 1);
+    setWorkingFixedId(postponeTarget.expenseId);
+    try {
+      await postponeRecurringExpensePayment(postponeTarget.expenseId, targetDate, postponeTarget.dueDate);
+      showToast({ type: 'success', title: 'Pago pospuesto.' });
+      setPostponeTarget(null);
+      setCustomPostponeDate('');
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo posponer', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingFixedId(null);
+    }
+  };
+
+  const handleSkipFixed = async (expenseId: string, dueDate: string) => {
+    if (!window.confirm('Seguro que quieres omitir este pago? No se registrara gasto.')) return;
+    setWorkingFixedId(expenseId);
+    try {
+      await skipRecurringExpensePayment(expenseId, dueDate);
+      showToast({ type: 'success', title: 'Pago omitido.' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo omitir', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingFixedId(null);
     }
@@ -673,6 +712,63 @@ export function PersonalBudgetModule() {
           <MiniSummary label="Pausados" value={String(pausedFixedExpenses.length)} />
         </div>
 
+        <Card className="border-l-4 border-l-primary">
+          <CardHeader>
+            <CardTitle>Centro de Pagos Personales</CardTitle>
+            <CardDescription>Pagos vencidos, de hoy y proximos calculados desde tus gastos fijos personales.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+              <PaymentKpi label="Vencidos" count={paymentStats.overdue.count} amount={paymentStats.overdue.amount} tone="danger" />
+              <PaymentKpi label="Vencen hoy" count={paymentStats.today.count} amount={paymentStats.today.amount} tone="warning" />
+              <PaymentKpi label="Proximos 7 dias" count={paymentStats.next7.count} amount={paymentStats.next7.amount} tone="info" />
+              <PaymentKpi label="Separar esta semana" amount={paymentStats.week.amount} tone="primary" />
+              <PaymentKpi label="Separar este mes" amount={paymentStats.month.amount} tone="info" />
+              <PaymentKpi label="Pagados este mes" amount={paymentStats.paidThisMonth.amount} tone="success" />
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="font-semibold">Alertas de pago</h4>
+              {paymentAlerts.length > 0 ? (
+                <div className="grid gap-2">
+                  {paymentAlerts.map((alert) => <PaymentAlert key={alert} text={alert} />)}
+                </div>
+              ) : (
+                <EmptyState text="No tienes alertas de pago personales por ahora." />
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="font-semibold">Pagos personales proximos</h4>
+              {personalPaymentOccurrences.length > 0 ? (
+                paymentGroups.map((group) => (
+                  <div key={group.id} className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-sm font-semibold text-muted-foreground">{group.label}</h5>
+                      <span className="text-xs font-medium text-muted-foreground">{money(group.items.reduce((sum, item) => sum + item.amount, 0))}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {group.items.map((item) => (
+                        <PaymentRow
+                          key={item.id}
+                          item={item}
+                          working={workingFixedId === item.expense.id}
+                          onPay={() => handlePayFixed(item.expense.id, item.dueDate)}
+                          onPostpone={() => setPostponeTarget({ expenseId: item.expense.id, dueDate: item.dueDate, name: item.expense.name })}
+                          onEdit={() => openFixedModal(item.expense)}
+                          onSkip={() => handleSkipFixed(item.expense.id, item.dueDate)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <EmptyState text="No hay pagos personales pendientes. Crea un gasto fijo personal para activar el centro de pagos." />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardContent className="p-0">
             {personalFixedExpenses.length > 0 ? (
@@ -947,6 +1043,31 @@ export function PersonalBudgetModule() {
         onTransfer={handleTransfer}
       />
 
+      {postponeTarget && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+          <Card className="w-full max-w-md border-border shadow-2xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle>Posponer pago</CardTitle>
+              <CardDescription>{postponeTarget.name} vence el {postponeTarget.dueDate}.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-5">
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" onClick={() => handlePostponeFixed(1)}>1 dia</Button>
+                <Button variant="outline" onClick={() => handlePostponeFixed(3)}>3 dias</Button>
+                <Button variant="outline" onClick={() => handlePostponeFixed(7)}>7 dias</Button>
+              </div>
+              <Field label="Fecha personalizada">
+                <input className="form-field" type="date" value={customPostponeDate} onChange={(event) => setCustomPostponeDate(event.target.value)} />
+              </Field>
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={() => { setPostponeTarget(null); setCustomPostponeDate(''); }}>Cancelar</Button>
+              <Button onClick={() => customPostponeDate && handlePostponeFixed(undefined, customPostponeDate)} disabled={!customPostponeDate}>Guardar</Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
+
       {fixedModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
           <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
@@ -1161,6 +1282,38 @@ function isWithinDays(dateValue: string | undefined, days: number) {
   return date >= new Date(now.toISOString().split('T')[0]) && date <= end;
 }
 
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function diffDays(dateValue: string, baseValue: string) {
+  const diff = parseLocalDate(dateValue).getTime() - parseLocalDate(baseValue).getTime();
+  return Math.round(diff / 86400000);
+}
+
+function relativeDueText(daysDiff: number) {
+  if (daysDiff < 0) return `Vencido hace ${Math.abs(daysDiff)} dias`;
+  if (daysDiff === 0) return 'Vence hoy';
+  if (daysDiff === 1) return 'Vence manana';
+  return `Vence en ${daysDiff} dias`;
+}
+
+function groupForDiff(daysDiff: number): PaymentOccurrence['group'] {
+  if (daysDiff < 0) return 'overdue';
+  if (daysDiff === 0) return 'today';
+  if (daysDiff === 1) return 'tomorrow';
+  if (daysDiff <= 7) return 'week';
+  if (daysDiff <= 15) return 'next15';
+  return 'later';
+}
+
+function addDaysString(dateValue: string, days: number) {
+  const date = parseLocalDate(dateValue);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function highestCategory(expenses: { category?: string; amount: number; frequency: string }[]) {
   const totals = new Map<string, number>();
   expenses.forEach((expense) => {
@@ -1181,6 +1334,151 @@ function MiniSummary({ label, value, detail }: { label: string; value: string; d
         {detail && <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+type PaymentOccurrence = {
+  id: string;
+  expense: RecurringExpense;
+  dueDate: string;
+  amount: number;
+  status: 'pendiente' | 'pagado' | 'vencido' | 'pausado' | 'omitido';
+  relative: string;
+  group: 'overdue' | 'today' | 'tomorrow' | 'week' | 'next15' | 'later';
+  daysDiff: number;
+};
+
+function buildPersonalPaymentOccurrences(expenses: RecurringExpense[], payments: RecurringExpensePayment[]) {
+  const items: PaymentOccurrence[] = [];
+  const todayDate = parseLocalDate(today);
+
+  expenses.forEach((expense) => {
+    const isPaused = expense.status === 'paused' || expense.is_active === false;
+    const baseDue = expense.snoozed_until || expense.next_due_date || expense.due_date || expense.next_run_date;
+    if (!baseDue) return;
+
+    const generated = isPaused ? [baseDue] : [
+      baseDue,
+      ...generateDueDates({
+        amount: Number(expense.amount || 0),
+        frequency: expense.frequency,
+        startDate: expense.start_date || baseDue,
+        recurrenceType: expense.recurrence_type,
+        weekdays: expense.weekdays,
+        monthDays: expense.month_days,
+        annualMonth: expense.annual_month,
+        annualDay: expense.annual_day,
+        intervalNumber: expense.interval_number,
+        intervalType: expense.interval_type,
+      }, todayDate, 30),
+    ];
+
+    Array.from(new Set(generated)).forEach((dueDate) => {
+      const payment = payments.find((item) => item.recurring_expense_id === expense.id && item.due_date === dueDate && ['paid', 'skipped'].includes(item.status));
+      const daysDiff = diffDays(dueDate, today);
+      const status = isPaused ? 'pausado' : payment?.status === 'paid' ? 'pagado' : payment?.status === 'skipped' ? 'omitido' : daysDiff < 0 ? 'vencido' : 'pendiente';
+      if (status === 'pagado' || status === 'omitido') return;
+      items.push({
+        id: `${expense.id}-${dueDate}`,
+        expense,
+        dueDate,
+        amount: Number(expense.amount || 0),
+        status,
+        relative: relativeDueText(daysDiff),
+        group: groupForDiff(daysDiff),
+        daysDiff,
+      });
+    });
+  });
+
+  return items.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+}
+
+function buildPaymentStats(items: PaymentOccurrence[], payments: RecurringExpensePayment[]) {
+  const currentMonth = today.slice(0, 7);
+  const paidThisMonth = payments.filter((payment) => payment.status === 'paid' && (payment.paid_date || '').startsWith(currentMonth));
+  return {
+    overdue: summarizePayments(items.filter((item) => item.status === 'vencido')),
+    today: summarizePayments(items.filter((item) => item.daysDiff === 0 && item.status !== 'pausado')),
+    next7: summarizePayments(items.filter((item) => item.daysDiff >= 0 && item.daysDiff <= 7 && item.status !== 'pausado')),
+    week: summarizePayments(items.filter((item) => item.daysDiff >= 0 && item.daysDiff <= 7 && item.status !== 'pausado')),
+    month: summarizePayments(items.filter((item) => item.dueDate.startsWith(currentMonth) && item.status !== 'pausado')),
+    paidThisMonth: { count: paidThisMonth.length, amount: paidThisMonth.reduce((sum, payment) => sum + Number(payment.amount || 0), 0) },
+  };
+}
+
+function summarizePayments(items: PaymentOccurrence[]) {
+  return { count: items.length, amount: items.reduce((sum, item) => sum + item.amount, 0) };
+}
+
+function groupPaymentOccurrences(items: PaymentOccurrence[]) {
+  const groups = [
+    ['overdue', 'Vencidos'],
+    ['today', 'Hoy'],
+    ['tomorrow', 'Manana'],
+    ['week', 'Esta semana'],
+    ['next15', 'Proximos 15 dias'],
+    ['later', 'Mas adelante'],
+  ] as const;
+  return groups
+    .map(([id, label]) => ({ id, label, items: items.filter((item) => item.group === id) }))
+    .filter((group) => group.items.length > 0);
+}
+
+function buildPaymentAlerts(stats: ReturnType<typeof buildPaymentStats>, items: PaymentOccurrence[]) {
+  const alerts: string[] = [];
+  const todayItems = items.filter((item) => item.daysDiff === 0);
+  todayItems.slice(0, 2).forEach((item) => alerts.push(`Hoy debes pagar ${item.expense.name} por ${money(item.amount)}.`));
+  const soon = items.find((item) => item.daysDiff > 0 && item.daysDiff <= 7);
+  if (soon) alerts.push(`${soon.expense.name} vence en ${soon.daysDiff} dias.`);
+  if (stats.week.count > 0) alerts.push(`Tienes ${stats.week.count} pagos esta semana por ${money(stats.week.amount)}.`);
+  if (stats.overdue.count > 0) alerts.push(`Tienes ${stats.overdue.count} pagos vencidos por ${money(stats.overdue.amount)}.`);
+  if (stats.week.amount > 0) alerts.push(`Separa ${money(stats.week.amount)} esta semana para cubrir tus pagos personales.`);
+  return alerts;
+}
+
+function PaymentKpi({ label, count, amount, tone }: { label: string; count?: number; amount: number; tone: 'danger' | 'warning' | 'info' | 'primary' | 'success' }) {
+  const classes = {
+    danger: 'border-destructive/25 bg-destructive/5 text-destructive',
+    warning: 'border-orange-300 bg-orange-50 text-orange-700',
+    info: 'border-blue-300 bg-blue-50 text-blue-700',
+    primary: 'border-primary/25 bg-primary/5 text-primary',
+    success: 'border-success/25 bg-success/5 text-success',
+  }[tone];
+  return (
+    <div className={`rounded-xl border p-3 ${classes}`}>
+      <p className="text-xs font-medium">{label}</p>
+      <p className="mt-1 text-lg font-bold">{money(amount)}</p>
+      {typeof count === 'number' && <p className="text-xs opacity-80">{count} pagos</p>}
+    </div>
+  );
+}
+
+function PaymentAlert({ text }: { text: string }) {
+  return <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">{text}</div>;
+}
+
+function PaymentRow({ item, working, onPay, onPostpone, onEdit, onSkip }: { item: PaymentOccurrence; working: boolean; onPay: () => void; onPostpone: () => void; onEdit: () => void; onSkip: () => void }) {
+  const tone = item.status === 'vencido' ? 'border-destructive/30 bg-destructive/5' : item.daysDiff === 0 ? 'border-orange-300 bg-orange-50/70' : item.status === 'pausado' ? 'border-border bg-muted/20' : 'border-border bg-card';
+  return (
+    <div className={`grid gap-3 rounded-xl border p-4 lg:grid-cols-[1fr_auto] lg:items-center ${tone}`}>
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-semibold">{item.expense.name}</p>
+          <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground">{item.status}</span>
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {money(item.amount)} · {item.expense.category || 'Otros'} · {item.expense.payment_method || 'Sin metodo'} · {item.dueDate}
+        </p>
+        <p className="text-xs font-medium text-muted-foreground">{item.relative}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 lg:justify-end">
+        <Button variant="outline" size="sm" disabled={working || item.status === 'pausado'} onClick={onPay}>Pagar</Button>
+        <Button variant="outline" size="sm" disabled={working || item.status === 'pausado'} onClick={onPostpone}>Posponer</Button>
+        <Button variant="outline" size="sm" disabled={working} onClick={onEdit}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
+        <Button variant="outline" size="sm" disabled={working || item.status === 'pausado'} onClick={onSkip}>Omitir este ciclo</Button>
+      </div>
+    </div>
   );
 }
 

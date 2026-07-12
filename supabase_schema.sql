@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     scope TEXT NOT NULL, -- 'personal' or 'negocio'
     amount NUMERIC(12, 2) NOT NULL,
     category TEXT,
+    payment_method TEXT,
     status TEXT DEFAULT 'recibido',
     notes TEXT,
     date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -85,6 +86,9 @@ CREATE TABLE IF NOT EXISTS public.recurring_expenses (
     is_required BOOLEAN DEFAULT true,
     is_active BOOLEAN DEFAULT true,
     last_paid_date DATE,
+    reminder_days_before INTEGER DEFAULT 0,
+    notifications_enabled BOOLEAN DEFAULT true,
+    snoozed_until DATE,
     monthly_amount NUMERIC(12, 2) DEFAULT 0,
     annual_amount NUMERIC(12, 2) DEFAULT 0,
     recurrence_type TEXT,
@@ -97,6 +101,24 @@ CREATE TABLE IF NOT EXISTS public.recurring_expenses (
     payment_method TEXT,
     mode TEXT NOT NULL,
     status TEXT DEFAULT 'active',
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Recurring Expense Payments History Table
+CREATE TABLE IF NOT EXISTS public.recurring_expense_payments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    recurring_expense_id UUID REFERENCES public.recurring_expenses(id) ON DELETE CASCADE NOT NULL,
+    owner_type TEXT DEFAULT 'personal',
+    business_unit_id TEXT,
+    amount NUMERIC(12, 2) NOT NULL,
+    due_date DATE NOT NULL,
+    paid_date DATE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payment_method TEXT,
+    transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
     notes TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -190,6 +212,10 @@ CREATE INDEX IF NOT EXISTS recurring_expenses_next_run_date_idx ON public.recurr
 CREATE INDEX IF NOT EXISTS recurring_expenses_next_due_date_idx ON public.recurring_expenses (next_due_date);
 CREATE INDEX IF NOT EXISTS recurring_expenses_business_unit_id_idx ON public.recurring_expenses (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_expenses (is_active);
+CREATE INDEX IF NOT EXISTS recurring_expense_payments_user_id_idx ON public.recurring_expense_payments (user_id);
+CREATE INDEX IF NOT EXISTS recurring_expense_payments_expense_id_idx ON public.recurring_expense_payments (recurring_expense_id);
+CREATE INDEX IF NOT EXISTS recurring_expense_payments_due_date_idx ON public.recurring_expense_payments (due_date);
+CREATE INDEX IF NOT EXISTS recurring_expense_payments_status_idx ON public.recurring_expense_payments (status);
 CREATE INDEX IF NOT EXISTS debts_user_id_idx ON public.debts (user_id);
 CREATE INDEX IF NOT EXISTS debts_business_unit_id_idx ON public.debts (business_unit_id);
 CREATE INDEX IF NOT EXISTS debts_business_id_idx ON public.debts (business_id);
@@ -206,6 +232,7 @@ ALTER TABLE public.accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.protected_funds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recurring_expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.recurring_expense_payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.debts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.investments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.monthly_targets ENABLE ROW LEVEL SECURITY;
@@ -219,6 +246,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     public.transactions,
     public.protected_funds,
     public.recurring_expenses,
+    public.recurring_expense_payments,
     public.debts,
     public.investments,
     public.monthly_targets,
@@ -261,6 +289,14 @@ WITH CHECK ((select auth.uid()) = user_id);
 DROP POLICY IF EXISTS "Users can manage their own recurring expenses" ON public.recurring_expenses;
 CREATE POLICY "Users can manage their own recurring expenses"
 ON public.recurring_expenses
+FOR ALL
+TO authenticated
+USING ((select auth.uid()) = user_id)
+WITH CHECK ((select auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "Users can manage their own recurring expense payments" ON public.recurring_expense_payments;
+CREATE POLICY "Users can manage their own recurring expense payments"
+ON public.recurring_expense_payments
 FOR ALL
 TO authenticated
 USING ((select auth.uid()) = user_id)

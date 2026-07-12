@@ -136,6 +136,23 @@ export function calculateNextDueDate(input: RecurrenceScheduleInput, fromDate = 
   return toDateString(next);
 }
 
+export function generateDueDates(input: RecurrenceScheduleInput, fromDate = new Date(), daysAhead = 30) {
+  const dates: string[] = [];
+  const start = startOfDay(fromDate);
+  const end = addDays(start, daysAhead);
+  let cursor = start;
+
+  for (let index = 0; index < 80; index += 1) {
+    const next = calculateNextDueDate(input, cursor);
+    const nextDate = startOfDay(new Date(next));
+    if (nextDate > end) break;
+    if (!dates.includes(next)) dates.push(next);
+    cursor = addDays(nextDate, 1);
+  }
+
+  return dates;
+}
+
 export function getRecurrenceDescription(input: RecurrenceScheduleInput) {
   const frequency = normalizeFrequency(input.frequency);
   if (frequency === 'weekly') {

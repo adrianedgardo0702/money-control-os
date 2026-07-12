@@ -34,6 +34,7 @@ export type Transaction = {
   scope: string;
   amount: number;
   category?: string;
+  payment_method?: string;
   status: string;
   notes?: string;
   date: string;
@@ -79,6 +80,9 @@ export type RecurringExpense = {
   is_required?: boolean;
   is_active?: boolean;
   last_paid_date?: string;
+  reminder_days_before?: number;
+  notifications_enabled?: boolean;
+  snoozed_until?: string | null;
   monthly_amount?: number;
   annual_amount?: number;
   recurrence_type?: string;
@@ -94,6 +98,23 @@ export type RecurringExpense = {
   business_id?: string;
   account_id?: string;
   notes?: string;
+};
+
+export type RecurringExpensePayment = {
+  id: string;
+  user_id?: string;
+  recurring_expense_id: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string | null;
+  amount: number;
+  due_date: string;
+  paid_date?: string | null;
+  status: 'pending' | 'paid' | 'skipped' | 'overdue' | 'postponed';
+  payment_method?: string | null;
+  transaction_id?: string | null;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type Debt = {
@@ -165,6 +186,7 @@ type AppState = {
   transactions: Transaction[];
   protectedFunds: ProtectedFund[];
   recurringExpenses: RecurringExpense[];
+  recurringExpensePayments: RecurringExpensePayment[];
   debts: Debt[];
   investments: Investment[];
   monthlyTarget: MonthlyTarget | null;
@@ -297,7 +319,9 @@ type AppState = {
     account_id?: string | null;
     notes?: string;
   }) => Promise<RecurringExpense>;
-  markRecurringExpensePaid: (id: string) => Promise<void>;
+  markRecurringExpensePaid: (id: string, dueDate?: string) => Promise<void>;
+  postponeRecurringExpensePayment: (id: string, untilDate: string, dueDate?: string) => Promise<void>;
+  skipRecurringExpensePayment: (id: string, dueDate?: string) => Promise<void>;
   updateRecurringExpenseStatus: (id: string, status: string) => Promise<void>;
   deleteRecurringExpense: (id: string) => Promise<void>;
   upsertMonthlyTarget: (input: Omit<MonthlyTarget, 'id' | 'user_id'>) => Promise<MonthlyTarget>;
@@ -414,6 +438,7 @@ export const useStore = create<AppState>((set, get) => ({
   transactions: [],
   protectedFunds: [],
   recurringExpenses: [],
+  recurringExpensePayments: [],
   debts: [],
   investments: [],
   monthlyTarget: null,
@@ -460,11 +485,18 @@ export const useStore = create<AppState>((set, get) => ({
           supabase.from('monthly_targets').select('*').eq('user_id', session.user.id).maybeSingle(),
           supabase.from('business_target_weights').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true })
         ]);
+        const paymentsResult = await supabase
+          .from('recurring_expense_payments')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('due_date', { ascending: false });
 
         const optionalTargetError = monthlyTargetResult.error && monthlyTargetResult.error.code !== 'PGRST116';
         const optionalWeightsError = businessWeightsResult.error;
+        const optionalPaymentsError = paymentsResult.error;
         if (optionalTargetError) console.warn('Monthly targets unavailable:', getErrorMessage(monthlyTargetResult.error));
         if (optionalWeightsError) console.warn('Business target weights unavailable:', getErrorMessage(optionalWeightsError));
+        if (optionalPaymentsError) console.warn('Recurring expense payments unavailable:', getErrorMessage(optionalPaymentsError));
 
         set({
           businesses: businesses || [],
@@ -472,6 +504,7 @@ export const useStore = create<AppState>((set, get) => ({
           transactions: transactions || [],
           protectedFunds: protectedFunds || [],
           recurringExpenses: recurringExpenses || [],
+          recurringExpensePayments: optionalPaymentsError ? [] : ((paymentsResult.data || []) as RecurringExpensePayment[]),
           debts: debts || [],
           investments: investmentsError ? [] : (investments || []),
           monthlyTarget: optionalTargetError ? null : (monthlyTargetResult.data as MonthlyTarget | null),
@@ -487,6 +520,7 @@ export const useStore = create<AppState>((set, get) => ({
           transactions: [],
           protectedFunds: [],
           recurringExpenses: [],
+          recurringExpensePayments: [],
           debts: [],
           investments: [],
           monthlyTarget: null,
@@ -506,7 +540,7 @@ export const useStore = create<AppState>((set, get) => ({
   signOut: async () => {
     if (supabase) {
       await supabase.auth.signOut();
-      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], investments: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
+      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], recurringExpensePayments: [], debts: [], investments: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
     }
   },
   createBusiness: async (input) => {
@@ -1039,13 +1073,14 @@ export const useStore = create<AppState>((set, get) => ({
     await get().fetchInitialData();
     return expense;
   },
-  markRecurringExpensePaid: async (id) => {
+  markRecurringExpensePaid: async (id, dueDateOverride) => {
     const client = requireSupabase();
     const user = requireSignedUser(get().user);
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
     const paidDate = new Date().toISOString().split('T')[0];
-    const fromDate = new Date();
+    const dueDate = dueDateOverride || expense.snoozed_until || expense.next_due_date || expense.due_date || expense.next_run_date || paidDate;
+    const fromDate = new Date(`${dueDate}T00:00:00`);
     fromDate.setDate(fromDate.getDate() + 1);
     const nextDate = calculateNextDueDate({
       amount: Number(expense.amount || 0),
@@ -1068,21 +1103,26 @@ export const useStore = create<AppState>((set, get) => ({
       scope: expense.scope === 'negocio' ? 'negocio' : 'personal',
       amount: Number(expense.amount || 0),
       category: expense.category || 'Gasto fijo',
+      payment_method: expense.payment_method || null,
       status: 'pagado',
       notes: `Pago de gasto fijo: ${expense.name}`,
+      date: paidDate,
       owner_type: expense.owner_type || (expense.scope === 'negocio' ? 'business' : 'personal'),
       business_unit_id: expense.business_unit_id || (expense.scope === 'negocio' ? expense.business_id || null : 'personal'),
       recurring_expense_id: expense.id
     };
 
-    const { error: transactionError } = await client.from('transactions').insert(transactionPayload);
+    const { data: transactionData, error: transactionError } = await client.from('transactions').insert(transactionPayload).select('id').single();
+    let transactionId = transactionData?.id || null;
     if (transactionError) {
-      const { owner_type, business_unit_id, recurring_expense_id, ...legacyTransactionPayload } = transactionPayload;
-      const { error: legacyTransactionError } = await client.from('transactions').insert(legacyTransactionPayload);
+      const { owner_type, business_unit_id, recurring_expense_id, payment_method, ...legacyTransactionPayload } = transactionPayload;
+      const { data: legacyTransactionData, error: legacyTransactionError } = await client.from('transactions').insert(legacyTransactionPayload).select('id').single();
       if (legacyTransactionError) throw new Error(getErrorMessage(legacyTransactionError));
+      transactionId = legacyTransactionData?.id || null;
       void owner_type;
       void business_unit_id;
       void recurring_expense_id;
+      void payment_method;
     }
 
     if (expense.account_id) {
@@ -1099,9 +1139,27 @@ export const useStore = create<AppState>((set, get) => ({
       next_run_date: nextDate,
       next_due_date: nextDate,
       due_date: nextDate,
+      snoozed_until: null,
       status: 'active',
       is_active: true
     };
+
+    const paymentPayload = {
+      user_id: user.id,
+      recurring_expense_id: expense.id,
+      owner_type: expense.owner_type || (expense.scope === 'negocio' ? 'business' : 'personal'),
+      business_unit_id: expense.business_unit_id || (expense.scope === 'negocio' ? expense.business_id || null : 'personal'),
+      amount: Number(expense.amount || 0),
+      due_date: dueDate,
+      paid_date: paidDate,
+      status: 'paid',
+      payment_method: expense.payment_method || null,
+      transaction_id: transactionId,
+      notes: `Pago de gasto fijo: ${expense.name}`
+    };
+    const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
+    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+
     const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
     if (error) {
       const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: nextDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
@@ -1110,6 +1168,91 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item)
     });
+    await get().fetchInitialData();
+  },
+  postponeRecurringExpensePayment: async (id, untilDate, dueDateOverride) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const expense = get().recurringExpenses.find((item) => item.id === id);
+    if (!expense) throw new Error('No se encontro el gasto fijo.');
+    const dueDate = dueDateOverride || expense.next_due_date || expense.due_date || expense.next_run_date || new Date().toISOString().split('T')[0];
+    const payload = {
+      next_run_date: untilDate,
+      next_due_date: untilDate,
+      due_date: untilDate,
+      snoozed_until: untilDate,
+      status: 'active',
+      is_active: true
+    };
+
+    const paymentPayload = {
+      user_id: user.id,
+      recurring_expense_id: expense.id,
+      owner_type: 'personal',
+      business_unit_id: 'personal',
+      amount: Number(expense.amount || 0),
+      due_date: dueDate,
+      paid_date: null,
+      status: 'postponed',
+      payment_method: expense.payment_method || null,
+      transaction_id: null,
+      notes: `Pago pospuesto hasta ${untilDate}: ${expense.name}`
+    };
+    const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
+    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+
+    const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
+    if (error) {
+      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: untilDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+    }
+    set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item) });
+    await get().fetchInitialData();
+  },
+  skipRecurringExpensePayment: async (id, dueDateOverride) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const expense = get().recurringExpenses.find((item) => item.id === id);
+    if (!expense) throw new Error('No se encontro el gasto fijo.');
+    const dueDate = dueDateOverride || expense.next_due_date || expense.due_date || expense.next_run_date || new Date().toISOString().split('T')[0];
+    const fromDate = new Date(`${dueDate}T00:00:00`);
+    fromDate.setDate(fromDate.getDate() + 1);
+    const nextDate = calculateNextDueDate({
+      amount: Number(expense.amount || 0),
+      frequency: expense.frequency,
+      startDate: expense.start_date || expense.due_date || expense.next_run_date,
+      recurrenceType: expense.recurrence_type,
+      weekdays: expense.weekdays,
+      monthDays: expense.month_days,
+      annualMonth: expense.annual_month,
+      annualDay: expense.annual_day,
+      intervalNumber: expense.interval_number,
+      intervalType: expense.interval_type,
+    }, fromDate);
+
+    const paymentPayload = {
+      user_id: user.id,
+      recurring_expense_id: expense.id,
+      owner_type: 'personal',
+      business_unit_id: 'personal',
+      amount: Number(expense.amount || 0),
+      due_date: dueDate,
+      paid_date: null,
+      status: 'skipped',
+      payment_method: expense.payment_method || null,
+      transaction_id: null,
+      notes: `Pago omitido: ${expense.name}`
+    };
+    const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
+    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+
+    const payload = { next_run_date: nextDate, next_due_date: nextDate, due_date: nextDate, snoozed_until: null, status: 'active', is_active: true };
+    const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
+    if (error) {
+      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: nextDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+    }
+    set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item) });
     await get().fetchInitialData();
   },
   updateRecurringExpenseStatus: async (id, status) => {
