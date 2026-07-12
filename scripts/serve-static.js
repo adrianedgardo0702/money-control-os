@@ -2,9 +2,10 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 
-const root = path.join(process.cwd(), 'out');
-const port = Number(process.env.PORT || 3000);
-const host = process.env.HOST || '0.0.0.0';
+const projectRoot = path.resolve(__dirname, '..');
+const root = path.join(projectRoot, 'out');
+const rawPort = process.env.PORT || '3000';
+const port = Number.isNaN(Number(rawPort)) ? rawPort : Number(rawPort);
 
 const types = {
   '.css': 'text/css; charset=utf-8',
@@ -33,6 +34,13 @@ function resolveFile(urlPath) {
 }
 
 http.createServer((request, response) => {
+  if (!fs.existsSync(root)) {
+    response.statusCode = 500;
+    response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    response.end('No se encontro la carpeta out. Ejecuta npm run build antes de iniciar la app.');
+    return;
+  }
+
   const file = resolveFile(request.url || '/');
   const ext = path.extname(file);
   response.setHeader('Cache-Control', 'no-store');
@@ -43,6 +51,6 @@ http.createServer((request, response) => {
       response.end('Not found');
     })
     .pipe(response);
-}).listen(port, host, () => {
-  console.log(`Noa Finanzas lista en http://${host}:${port}`);
+}).listen(port, () => {
+  console.log(`Noa Finanzas lista en el puerto ${rawPort}`);
 });
