@@ -269,13 +269,14 @@ export function PersonalBudgetModule() {
             ['emergency', 'Emergencia'],
           ]} />
           <Select value={view} onChange={setView} options={[
-            ['summary', 'Resumen personal'],
-            ['expenses', 'Ingresos y gastos'],
-            ['fixed', 'Gastos fijos'],
-            ['debts', 'Deudas'],
-            ['budget', 'Presupuesto'],
+            ['summary', 'Resumen'],
+            ['movements', 'Movimientos personales'],
+            ['fixed', 'Gastos fijos personales'],
+            ['debts', 'Deudas personales'],
+            ['cards', 'Tarjetas personales'],
+            ['budget', 'Presupuesto personal'],
             ['savings', 'Ahorro y metas'],
-            ['withdrawals', 'Retiros'],
+            ['withdrawals', 'Retiros desde negocios'],
           ]} />
         </div>
       </div>

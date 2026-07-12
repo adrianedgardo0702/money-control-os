@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Activity, AlertCircle, ArrowDownRight, ArrowUpRight, Briefcase, RefreshCcw, ShieldCheck, Target, Wallet, X } from 'lucide-react';
+import { Activity, AlertCircle, ArrowDownRight, ArrowUpRight, Briefcase, CheckCircle2, RefreshCcw, ShieldCheck, Target, Wallet, X } from 'lucide-react';
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useStore } from '@/store/useStore';
 import { showToast } from '@/lib/toast';
@@ -56,6 +56,16 @@ export function Overview() {
   const hasChartData = flowChart.some((point) => point.ingresos > 0 || point.gastos > 0);
   const hasDistribution = unitDistribution.some((item) => item.value > 0);
   const syncLabel = lastSyncedAt ? new Intl.DateTimeFormat('es-PA', { hour: '2-digit', minute: '2-digit' }).format(new Date(lastSyncedAt)) : 'sin actualizar';
+  const setupSteps = [
+    { label: 'Crear cuentas y bolsillos', done: accounts.length > 0 },
+    { label: 'Configurar Finanzas Personales', done: accounts.some((account) => account.is_personal) || transactions.some((transaction) => transaction.scope === 'personal') },
+    { label: 'Configurar negocios', done: businesses.length > 0 },
+    { label: 'Registrar gastos fijos', done: recurringExpenses.length > 0 },
+    { label: 'Registrar deudas', done: debts.length > 0 },
+    { label: 'Definir dinero no tocar', done: protectedFunds.length > 0 },
+    { label: 'Definir metas de facturacion', done: Boolean(monthlyTarget) || businessTargetWeights.length > 0 },
+  ];
+  const setupDone = setupSteps.filter((step) => step.done).length;
 
   const handleRefreshData = async () => {
     setIsRefreshing(true);
@@ -90,6 +100,31 @@ export function Overview() {
           </Button>
         </div>
       </header>
+
+      {setupDone < setupSteps.length && (
+        <Card className="border-border bg-card shadow-sm">
+          <CardContent className="space-y-4 p-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="font-display text-lg font-semibold">Primeros pasos</h3>
+                <p className="text-sm text-muted-foreground">Configura solo datos reales. Noa usa esto para calcular tu dinero libre, metas y reportes.</p>
+              </div>
+              <div className="text-sm font-semibold text-primary">{setupDone}/{setupSteps.length} completo</div>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.round((setupDone / setupSteps.length) * 100)}%` }} />
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {setupSteps.map((step) => (
+                <div key={step.label} className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${step.done ? 'border-success/20 bg-success/5 text-success' : 'border-border bg-muted/20 text-muted-foreground'}`}>
+                  {step.done ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
+                  <span className="font-medium">{step.label}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <section className="grid gap-4 md:grid-cols-3">
         <HeroMetric title="Dinero total" value={totalMoney} icon={<Wallet className="h-5 w-5" />} />

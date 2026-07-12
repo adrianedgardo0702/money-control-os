@@ -104,6 +104,22 @@ export type Debt = {
   notes?: string;
 };
 
+export type Investment = {
+  id: string;
+  user_id?: string;
+  name: string;
+  amount: number;
+  category?: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string;
+  business_id?: string;
+  account_id?: string;
+  investment_date?: string;
+  expected_return?: number;
+  status?: string;
+  notes?: string;
+};
+
 export type MonthlyTarget = {
   id?: string;
   user_id?: string;
@@ -136,6 +152,7 @@ type AppState = {
   protectedFunds: ProtectedFund[];
   recurringExpenses: RecurringExpense[];
   debts: Debt[];
+  investments: Investment[];
   monthlyTarget: MonthlyTarget | null;
   businessTargetWeights: BusinessTargetWeight[];
   setActiveBusinessId: (id: string | 'all' | 'personal') => void;
@@ -290,6 +307,33 @@ type AppState = {
   }) => Promise<Debt>;
   registerDebtPayment: (id: string, amount: number) => Promise<void>;
   deleteDebt: (id: string) => Promise<void>;
+  createInvestment: (input: {
+    name: string;
+    amount: number;
+    category?: string;
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    business_id?: string | null;
+    account_id?: string | null;
+    investment_date?: string;
+    expected_return?: number;
+    status?: string;
+    notes?: string;
+  }) => Promise<Investment>;
+  updateInvestment: (id: string, input: {
+    name: string;
+    amount: number;
+    category?: string;
+    owner_type?: 'personal' | 'business';
+    business_unit_id?: string | null;
+    business_id?: string | null;
+    account_id?: string | null;
+    investment_date?: string;
+    expected_return?: number;
+    status?: string;
+    notes?: string;
+  }) => Promise<Investment>;
+  deleteInvestment: (id: string) => Promise<void>;
 };
 
 const getErrorMessage = (error: unknown) => {
@@ -360,6 +404,7 @@ export const useStore = create<AppState>((set, get) => ({
   protectedFunds: [],
   recurringExpenses: [],
   debts: [],
+  investments: [],
   monthlyTarget: null,
   businessTargetWeights: [],
   setPreviewMode: (val) => set({ isPreviewMode: val, isLoading: false, user: val ? { id: 'preview', email: 'preview@example.com' } : null }),
@@ -382,10 +427,11 @@ export const useStore = create<AppState>((set, get) => ({
           supabase.from('transactions').select('*').eq('user_id', session.user.id).order('date', { ascending: false }),
           supabase.from('protected_funds').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true }),
           supabase.from('recurring_expenses').select('*').eq('user_id', session.user.id).order('next_run_date', { ascending: true }),
-          supabase.from('debts').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true })
+          supabase.from('debts').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true }),
+          supabase.from('investments').select('*').eq('user_id', session.user.id).order('created_at', { ascending: true })
         ]);
 
-        const firstError = results.find((result) => result.error)?.error;
+        const firstError = results.find((result, index) => index !== 6 && result.error)?.error;
         if (firstError) throw firstError;
 
         const [
@@ -394,8 +440,10 @@ export const useStore = create<AppState>((set, get) => ({
           { data: transactions },
           { data: protectedFunds },
           { data: recurringExpenses },
-          { data: debts }
+          { data: debts },
+          { data: investments, error: investmentsError }
         ] = results;
+        if (investmentsError) console.warn('Investments unavailable:', getErrorMessage(investmentsError));
 
         const [monthlyTargetResult, businessWeightsResult] = await Promise.all([
           supabase.from('monthly_targets').select('*').eq('user_id', session.user.id).maybeSingle(),
@@ -414,6 +462,7 @@ export const useStore = create<AppState>((set, get) => ({
           protectedFunds: protectedFunds || [],
           recurringExpenses: recurringExpenses || [],
           debts: debts || [],
+          investments: investmentsError ? [] : (investments || []),
           monthlyTarget: optionalTargetError ? null : (monthlyTargetResult.data as MonthlyTarget | null),
           businessTargetWeights: optionalWeightsError ? [] : ((businessWeightsResult.data || []) as BusinessTargetWeight[]),
           lastSyncedAt: new Date().toISOString(),
@@ -428,6 +477,7 @@ export const useStore = create<AppState>((set, get) => ({
           protectedFunds: [],
           recurringExpenses: [],
           debts: [],
+          investments: [],
           monthlyTarget: null,
           businessTargetWeights: [],
           lastSyncedAt: new Date().toISOString(),
@@ -445,7 +495,7 @@ export const useStore = create<AppState>((set, get) => ({
   signOut: async () => {
     if (supabase) {
       await supabase.auth.signOut();
-      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
+      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], debts: [], investments: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
     }
   },
   createBusiness: async (input) => {
@@ -1194,6 +1244,72 @@ export const useStore = create<AppState>((set, get) => ({
     const { error } = await client.from('debts').delete().eq('id', id).eq('user_id', user.id);
     if (error) throw new Error(getErrorMessage(error));
     set({ debts: get().debts.filter((debt) => debt.id !== id) });
+    await get().fetchInitialData();
+  },
+  createInvestment: async (input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const amount = parseMoney(input.amount);
+    if (!name) throw new Error('El nombre de la inversion es obligatorio.');
+
+    const payload = {
+      user_id: user.id,
+      name,
+      amount,
+      category: input.category?.trim() || null,
+      owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
+      business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
+      business_id: input.business_id || null,
+      account_id: input.account_id || null,
+      investment_date: input.investment_date || new Date().toISOString().slice(0, 10),
+      expected_return: Number(input.expected_return || 0),
+      status: input.status || 'active',
+      notes: input.notes?.trim() || null
+    };
+
+    const { data, error } = await client.from('investments').insert(payload).select('*').single();
+    if (error) throw new Error(getErrorMessage(error));
+    const investment = data as Investment;
+    set({ investments: [...get().investments, investment] });
+    await get().fetchInitialData();
+    return investment;
+  },
+  updateInvestment: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const amount = Number(input.amount);
+    if (!name) throw new Error('El nombre de la inversion es obligatorio.');
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('El monto debe ser mayor que cero.');
+
+    const payload = {
+      name,
+      amount,
+      category: input.category?.trim() || null,
+      owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
+      business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
+      business_id: input.business_id || null,
+      account_id: input.account_id || null,
+      investment_date: input.investment_date || new Date().toISOString().slice(0, 10),
+      expected_return: Number(input.expected_return || 0),
+      status: input.status || 'active',
+      notes: input.notes?.trim() || null
+    };
+
+    const { data, error } = await client.from('investments').update(payload).eq('id', id).eq('user_id', user.id).select('*').single();
+    if (error) throw new Error(getErrorMessage(error));
+    const investment = data as Investment;
+    set({ investments: get().investments.map((item) => item.id === id ? investment : item) });
+    await get().fetchInitialData();
+    return investment;
+  },
+  deleteInvestment: async (id) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const { error } = await client.from('investments').delete().eq('id', id).eq('user_id', user.id);
+    if (error) throw new Error(getErrorMessage(error));
+    set({ investments: get().investments.filter((investment) => investment.id !== id) });
     await get().fetchInitialData();
   }
 }));

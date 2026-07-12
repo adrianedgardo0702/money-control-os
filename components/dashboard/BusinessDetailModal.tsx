@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Activity, AlertCircle, BarChart3, Calendar, CheckCircle2, CreditCard, Download, Pencil, Pause, PiggyBank, Play, Plus, ShieldAlert, Target, Trash2, TrendingUp, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { Account, Debt, ProtectedFund, RecurringExpense, Transaction, useStore } from '@/store/useStore';
+import { Account, Debt, Investment, ProtectedFund, RecurringExpense, Transaction, useStore } from '@/store/useStore';
 import { defaultMonthlyTarget, money, monthlyCost } from '@/lib/financePlanning';
 import { showToast } from '@/lib/toast';
 
@@ -27,6 +27,7 @@ const priorities = ['Critica', 'Alta', 'Media', 'Baja'];
 const initialFixedForm = { name: '', amount: '', frequency: 'Mensual', category: 'publicidad', dueDate: new Date().toISOString().slice(0, 10), paymentMethod: 'Transferencia', accountId: '', isActive: true, notes: '' };
 const initialDebtForm = { name: '', type: 'Prestamo', category: 'Negocio', originalAmount: '', pending: '', paid: '0', minimum: '', dueDate: '', interest: '0', priority: 'Media', status: 'Al dia', risk: 'Medio', notes: '' };
 const initialFundForm = { name: '', amount: '', category: 'inventario', targetDate: '', priority: 'Alta', accountId: '', blockWithdrawals: true, status: 'active', notes: '' };
+const initialInvestmentForm = { name: '', amount: '', category: 'inventario', investmentDate: new Date().toISOString().slice(0, 10), expectedReturn: '', accountId: '', status: 'active', notes: '' };
 
 const getChartData = (transactions: Transaction[] = []) => {
   const months = new Map<string, { key: string; name: string; ingresos: number; gastos: number }>();
@@ -51,6 +52,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
     transactions,
     recurringExpenses,
     debts,
+    investments,
     protectedFunds,
     monthlyTarget,
     businessTargetWeights,
@@ -63,6 +65,9 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
     updateDebt,
     registerDebtPayment,
     deleteDebt,
+    createInvestment,
+    updateInvestment,
+    deleteInvestment,
     createProtectedFund,
     updateProtectedFund,
     deleteProtectedFund,
@@ -71,9 +76,10 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
   } = useStore();
 
   const [tab, setTab] = useState('summary');
-  const [modal, setModal] = useState<{ kind: 'fixed' | 'debt' | 'fund' | 'debtPayment' | null; id?: string | null }>({ kind: null });
+  const [modal, setModal] = useState<{ kind: 'fixed' | 'debt' | 'investment' | 'fund' | 'debtPayment' | null; id?: string | null }>({ kind: null });
   const [fixedForm, setFixedForm] = useState(initialFixedForm);
   const [debtForm, setDebtForm] = useState(initialDebtForm);
+  const [investmentForm, setInvestmentForm] = useState(initialInvestmentForm);
   const [fundForm, setFundForm] = useState(initialFundForm);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [targetForm, setTargetForm] = useState({ monthlyRevenue: '', dailyGoal: '', desiredProfit: '', reinvestment: '', operatingDays: '26', weight: '0', expectedMargin: '0' });
@@ -87,6 +93,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
   const businessFixedExpenses = useMemo(() => recurringExpenses.filter((expense) => belongsToBusiness(expense, businessId)), [recurringExpenses, businessId]);
   const businessFunds = useMemo(() => protectedFunds.filter((fund) => belongsToBusiness(fund, businessId) && fund.status !== 'deleted'), [protectedFunds, businessId]);
   const businessDebts = useMemo(() => debts.filter((debt) => belongsToBusiness(debt, businessId) || legacyDebtMatch(debt, business?.name)), [debts, businessId, business?.name]);
+  const businessInvestments = useMemo(() => investments.filter((investment) => belongsToBusiness(investment, businessId)), [investments, businessId]);
 
   const activeFixed = businessFixedExpenses.filter(isActiveExpense);
   const activeFunds = businessFunds.filter((fund) => fund.status === 'active');
@@ -95,6 +102,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
   const protectedTotal = activeFunds.reduce((sum, fund) => sum + Number(fund.amount || 0), 0);
   const debtTotal = openDebts.reduce((sum, debt) => sum + Number(debt.pending || 0), 0);
   const debtMinimums = openDebts.reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
+  const investmentTotal = businessInvestments.reduce((sum, investment) => sum + Number(investment.amount || 0), 0);
   const income = businessTransactions.filter((transaction) => transaction.type === 'ingreso').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   const variableExpenses = businessTransactions.filter((transaction) => transaction.type === 'gasto').reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
   const available = businessAccounts.reduce((sum, account) => sum + Number(account.current_balance || 0), 0);
@@ -196,6 +204,26 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
     }
     setFundForm(initialFundForm);
     setModal({ kind: 'fund' });
+  };
+
+  const openInvestmentModal = (investment?: Investment) => {
+    setError('');
+    if (investment) {
+      setInvestmentForm({
+        name: investment.name || '',
+        amount: String(investment.amount || ''),
+        category: investment.category || 'inventario',
+        investmentDate: investment.investment_date || new Date().toISOString().slice(0, 10),
+        expectedReturn: String(investment.expected_return || ''),
+        accountId: investment.account_id || '',
+        status: investment.status || 'active',
+        notes: investment.notes || '',
+      });
+      setModal({ kind: 'investment', id: investment.id });
+      return;
+    }
+    setInvestmentForm(initialInvestmentForm);
+    setModal({ kind: 'investment' });
   };
 
   const closeModal = () => {
@@ -308,6 +336,36 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
     }
   };
 
+  const saveInvestment = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        name: investmentForm.name,
+        amount: Number(investmentForm.amount),
+        category: investmentForm.category,
+        owner_type: 'business' as const,
+        business_unit_id: businessId,
+        business_id: businessId,
+        account_id: investmentForm.accountId || null,
+        investment_date: investmentForm.investmentDate,
+        expected_return: Number(investmentForm.expectedReturn || 0),
+        status: investmentForm.status,
+        notes: investmentForm.notes,
+      };
+      if (modal.id) await updateInvestment(modal.id, payload);
+      else await createInvestment(payload);
+      showToast({ type: 'success', title: modal.id ? 'Inversion actualizada' : 'Inversion creada', description: `${business.name} fue actualizado.` });
+      closeModal();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo guardar la inversion.';
+      setError(message);
+      showToast({ type: 'error', title: 'No se pudo guardar', description: message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveDebtPayment = async () => {
     if (!modal.id) return;
     setSaving(true);
@@ -378,6 +436,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
               ['movements', 'Ingresos y gastos'],
               ['fixed', 'Gastos fijos'],
               ['debts', 'Deudas'],
+              ['investments', 'Inversiones'],
               ['protected', 'Dinero no tocar'],
               ['targets', 'Metas'],
               ['report', 'Reporte'],
@@ -455,6 +514,17 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
             </SectionShell>
           )}
 
+          {tab === 'investments' && (
+            <SectionShell title="Inversiones del negocio" description="Registra compras, capital, inventario o mejoras asociadas al negocio actual." actions={<Button size="sm" onClick={() => openInvestmentModal()}><Plus className="mr-2 h-4 w-4" /> Nueva inversion</Button>}>
+              <div className="grid gap-3 md:grid-cols-3">
+                <MiniSummary label="Total invertido" value={investmentTotal} />
+                <MiniSummary label="Inversiones activas" text={`${businessInvestments.filter((investment) => investment.status !== 'closed').length}`} />
+                <MiniSummary label="Retorno esperado" value={businessInvestments.reduce((sum, investment) => sum + Number(investment.expected_return || 0), 0)} />
+              </div>
+              <InvestmentList rows={businessInvestments} onEdit={openInvestmentModal} onDelete={deleteInvestment} />
+            </SectionShell>
+          )}
+
           {tab === 'protected' && (
             <SectionShell title="Dinero no tocar del negocio" description="Reservas internas para proteger inventario, nomina, impuestos y pagos." actions={<Button size="sm" onClick={() => openFundModal()}><Plus className="mr-2 h-4 w-4" /> Nueva reserva</Button>}>
               <div className="grid gap-3 md:grid-cols-3">
@@ -492,6 +562,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
                 <MiniSummary label="Ingresos" value={income} />
                 <MiniSummary label="Gastos variables" value={variableExpenses} />
                 <MiniSummary label="Gastos fijos" value={fixedTotal} />
+                <MiniSummary label="Inversiones" value={investmentTotal} />
                 <MiniSummary label="Deudas" value={debtTotal} />
                 <MiniSummary label="Dinero no tocar" value={protectedTotal} />
                 <MiniSummary label="Utilidad estimada" value={profit} />
@@ -537,6 +608,21 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
             <Field label="Riesgo"><Select value={debtForm.risk} options={['Alto', 'Medio', 'Bajo']} onChange={(value) => setDebtForm({ ...debtForm, risk: value })} /></Field>
           </div>
           <Field label="Notas"><input className="form-field" value={debtForm.notes} onChange={(event) => setDebtForm({ ...debtForm, notes: event.target.value })} /></Field>
+        </FormModal>
+      )}
+
+      {modal.kind === 'investment' && (
+        <FormModal title={modal.id ? 'Editar inversion' : 'Nueva inversion'} description={`Se guardara automaticamente en ${business.name}.`} onClose={closeModal} onSave={saveInvestment} saving={saving} error={error}>
+          <Field label="Nombre"><input className="form-field" value={investmentForm.name} onChange={(event) => setInvestmentForm({ ...investmentForm, name: event.target.value })} placeholder="Ej: Inventario inicial, publicidad, equipo" /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Monto"><input className="form-field" type="number" min="0" step="0.01" value={investmentForm.amount} onChange={(event) => setInvestmentForm({ ...investmentForm, amount: event.target.value })} /></Field>
+            <Field label="Categoria"><Select value={investmentForm.category} options={['inventario', 'marketing', 'equipo', 'software', 'producto', 'capital', 'otros']} onChange={(value) => setInvestmentForm({ ...investmentForm, category: value })} /></Field>
+            <Field label="Fecha"><input className="form-field" type="date" value={investmentForm.investmentDate} onChange={(event) => setInvestmentForm({ ...investmentForm, investmentDate: event.target.value })} /></Field>
+            <Field label="Retorno esperado"><input className="form-field" type="number" min="0" step="0.01" value={investmentForm.expectedReturn} onChange={(event) => setInvestmentForm({ ...investmentForm, expectedReturn: event.target.value })} /></Field>
+            <Field label="Estado"><Select value={investmentForm.status} options={['active', 'planned', 'closed']} onChange={(value) => setInvestmentForm({ ...investmentForm, status: value })} /></Field>
+            <Field label="Cuenta asociada"><AccountSelect accounts={businessAccounts} value={investmentForm.accountId} onChange={(value) => setInvestmentForm({ ...investmentForm, accountId: value })} /></Field>
+          </div>
+          <Field label="Nota"><input className="form-field" value={investmentForm.notes} onChange={(event) => setInvestmentForm({ ...investmentForm, notes: event.target.value })} placeholder="Opcional" /></Field>
         </FormModal>
       )}
 
@@ -652,6 +738,11 @@ function FixedExpenseList({ rows, onEdit, onPaid, onToggle, onDelete }: { rows: 
 function DebtList({ rows, onEdit, onPay, onMarkPaid, onDelete }: { rows: Debt[]; onEdit: (debt: Debt) => void; onPay: (debt: Debt) => void; onMarkPaid: (debt: Debt) => Promise<Debt>; onDelete: (id: string) => Promise<void> }) {
   if (rows.length === 0) return <EmptyState text="No hay deudas asociadas a este negocio todavia." />;
   return <div className="space-y-2">{rows.map((debt) => <ActionRow key={debt.id} title={debt.name} detail={`${debt.type} - ${debt.priority || 'Media'} - Vence: ${debt.due_date || 'sin fecha'}`} value={money(Number(debt.pending || 0))} status={debt.status || 'Al dia'} actions={<><IconButton label="Editar" onClick={() => onEdit(debt)} icon={<Pencil className="h-4 w-4" />} /><IconButton label="Abonar" onClick={() => onPay(debt)} icon={<CreditCard className="h-4 w-4" />} /><IconButton label="Pagada" onClick={() => onMarkPaid(debt)} icon={<CheckCircle2 className="h-4 w-4" />} /><IconButton label="Eliminar" onClick={() => onDelete(debt.id)} icon={<Trash2 className="h-4 w-4" />} danger /></>} />)}</div>;
+}
+
+function InvestmentList({ rows, onEdit, onDelete }: { rows: Investment[]; onEdit: (investment: Investment) => void; onDelete: (id: string) => Promise<void> }) {
+  if (rows.length === 0) return <EmptyState text="No hay inversiones registradas para este negocio." />;
+  return <div className="space-y-2">{rows.map((investment) => <ActionRow key={investment.id} title={investment.name} detail={`${investment.category || 'Sin categoria'} - ${investment.investment_date || 'sin fecha'} - Retorno esperado: ${money(Number(investment.expected_return || 0))}`} value={money(Number(investment.amount || 0))} status={investment.status || 'active'} actions={<><IconButton label="Editar" onClick={() => onEdit(investment)} icon={<Pencil className="h-4 w-4" />} /><IconButton label="Eliminar" onClick={() => onDelete(investment.id)} icon={<Trash2 className="h-4 w-4" />} danger /></>} />)}</div>;
 }
 
 function FundList({ rows, onEdit, onDelete }: { rows: ProtectedFund[]; onEdit: (fund: ProtectedFund) => void; onDelete: (id: string) => Promise<void> }) {

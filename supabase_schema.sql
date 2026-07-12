@@ -140,6 +140,25 @@ CREATE TABLE IF NOT EXISTS public.debts (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Investments Table
+CREATE TABLE IF NOT EXISTS public.investments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+    name TEXT NOT NULL,
+    amount NUMERIC(12, 2) NOT NULL,
+    category TEXT,
+    owner_type TEXT DEFAULT 'personal',
+    business_unit_id TEXT,
+    business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
+    account_id UUID REFERENCES public.accounts(id) ON DELETE SET NULL,
+    investment_date DATE DEFAULT CURRENT_DATE,
+    expected_return NUMERIC(12, 2) DEFAULT 0,
+    status TEXT DEFAULT 'active',
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Helpful indexes for RLS and dashboard queries.
 CREATE INDEX IF NOT EXISTS businesses_user_id_idx ON public.businesses (user_id);
 CREATE INDEX IF NOT EXISTS accounts_user_id_idx ON public.accounts (user_id);
@@ -158,6 +177,9 @@ CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_
 CREATE INDEX IF NOT EXISTS debts_user_id_idx ON public.debts (user_id);
 CREATE INDEX IF NOT EXISTS debts_business_unit_id_idx ON public.debts (business_unit_id);
 CREATE INDEX IF NOT EXISTS debts_business_id_idx ON public.debts (business_id);
+CREATE INDEX IF NOT EXISTS investments_user_id_idx ON public.investments (user_id);
+CREATE INDEX IF NOT EXISTS investments_business_unit_id_idx ON public.investments (business_unit_id);
+CREATE INDEX IF NOT EXISTS investments_business_id_idx ON public.investments (business_id);
 CREATE INDEX IF NOT EXISTS monthly_targets_user_id_idx ON public.monthly_targets (user_id);
 CREATE INDEX IF NOT EXISTS business_target_weights_user_id_idx ON public.business_target_weights (user_id);
 CREATE INDEX IF NOT EXISTS business_target_weights_business_unit_id_idx ON public.business_target_weights (business_unit_id);
@@ -169,6 +191,7 @@ ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.protected_funds ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.recurring_expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.debts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.investments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.monthly_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_target_weights ENABLE ROW LEVEL SECURITY;
 
@@ -181,6 +204,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     public.protected_funds,
     public.recurring_expenses,
     public.debts,
+    public.investments,
     public.monthly_targets,
     public.business_target_weights
 TO authenticated;
@@ -229,6 +253,14 @@ WITH CHECK ((select auth.uid()) = user_id);
 DROP POLICY IF EXISTS "Users can manage their own debts" ON public.debts;
 CREATE POLICY "Users can manage their own debts"
 ON public.debts
+FOR ALL
+TO authenticated
+USING ((select auth.uid()) = user_id)
+WITH CHECK ((select auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "Users can manage their own investments" ON public.investments;
+CREATE POLICY "Users can manage their own investments"
+ON public.investments
 FOR ALL
 TO authenticated
 USING ((select auth.uid()) = user_id)

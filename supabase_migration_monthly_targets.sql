@@ -34,6 +34,24 @@ ALTER TABLE public.debts
   ADD COLUMN IF NOT EXISTS business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
   ADD COLUMN IF NOT EXISTS notes TEXT;
 
+CREATE TABLE IF NOT EXISTS public.investments (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  name TEXT NOT NULL,
+  amount NUMERIC(12, 2) NOT NULL,
+  category TEXT,
+  owner_type TEXT DEFAULT 'personal',
+  business_unit_id TEXT,
+  business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
+  account_id UUID REFERENCES public.accounts(id) ON DELETE SET NULL,
+  investment_date DATE DEFAULT CURRENT_DATE,
+  expected_return NUMERIC(12, 2) DEFAULT 0,
+  status TEXT DEFAULT 'active',
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.monthly_targets (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL UNIQUE,
@@ -66,11 +84,15 @@ CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_
 CREATE INDEX IF NOT EXISTS protected_funds_business_unit_id_idx ON public.protected_funds (business_unit_id);
 CREATE INDEX IF NOT EXISTS debts_business_unit_id_idx ON public.debts (business_unit_id);
 CREATE INDEX IF NOT EXISTS debts_business_id_idx ON public.debts (business_id);
+CREATE INDEX IF NOT EXISTS investments_user_id_idx ON public.investments (user_id);
+CREATE INDEX IF NOT EXISTS investments_business_unit_id_idx ON public.investments (business_unit_id);
+CREATE INDEX IF NOT EXISTS investments_business_id_idx ON public.investments (business_id);
 
 ALTER TABLE public.monthly_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_target_weights ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.investments ENABLE ROW LEVEL SECURITY;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.monthly_targets, public.business_target_weights TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.monthly_targets, public.business_target_weights, public.investments TO authenticated;
 
 DROP POLICY IF EXISTS "Users can manage their own monthly targets" ON public.monthly_targets;
 CREATE POLICY "Users can manage their own monthly targets"
@@ -83,6 +105,14 @@ WITH CHECK ((SELECT auth.uid()) = user_id);
 DROP POLICY IF EXISTS "Users can manage their own business target weights" ON public.business_target_weights;
 CREATE POLICY "Users can manage their own business target weights"
 ON public.business_target_weights
+FOR ALL
+TO authenticated
+USING ((SELECT auth.uid()) = user_id)
+WITH CHECK ((SELECT auth.uid()) = user_id);
+
+DROP POLICY IF EXISTS "Users can manage their own investments" ON public.investments;
+CREATE POLICY "Users can manage their own investments"
+ON public.investments
 FOR ALL
 TO authenticated
 USING ((SELECT auth.uid()) = user_id)
