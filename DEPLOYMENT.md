@@ -1,6 +1,6 @@
 # Despliegue en Hostinger
 
-Esta app es un proyecto Next.js con Supabase. Para desplegarla en Hostinger necesitas un plan con soporte para Node.js o un VPS. Un hosting estatico/cPanel basico no ejecuta `next start`.
+Esta app es un proyecto Next.js exportado como sitio estatico con Supabase en el navegador. En Hostinger debe publicarse el directorio `out`.
 
 ## Antes de subir a GitHub
 
@@ -27,15 +27,20 @@ Usa la anon key publica de Supabase. No uses `service_role` en esta app.
 
 ## Comandos de Hostinger
 
-Si Hostinger permite configurar comandos:
+Configura el despliegue asi:
 
 ```bash
 npm ci
 npm run build
-npm run start
 ```
 
-La configuracion de Next.js usa `output: 'standalone'`. Por eso `npm run start` ejecuta `node .next/standalone/server.js`, que es el servidor correcto para produccion.
+Directorio de salida / publish directory:
+
+```bash
+out
+```
+
+No necesitas comando de inicio para hosting estatico. Si Hostinger exige uno en modo Node, usa `npm run start`, que sirve el contenido de `out`.
 
 ## Base de datos
 
