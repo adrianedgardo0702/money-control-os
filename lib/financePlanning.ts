@@ -1,4 +1,5 @@
 import type { Business, BusinessTargetWeight, Debt, MonthlyTarget, ProtectedFund, RecurringExpense, Transaction } from '@/store/useStore';
+import { calculateRecurrence } from './recurrence';
 
 export const PERSONAL_UNIT_ID = 'personal';
 export const SHARED_UNIT_ID = 'shared';
@@ -29,8 +30,24 @@ export const defaultMonthlyTarget: Omit<MonthlyTarget, 'id' | 'user_id'> = {
 
 export const money = (value: number) => `$${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function monthlyCost(expense: Pick<RecurringExpense, 'amount' | 'frequency'>) {
+export function monthlyCost(expense: Pick<RecurringExpense, 'amount' | 'frequency'> & Partial<Pick<RecurringExpense, 'monthly_amount' | 'recurrence_type' | 'weekdays' | 'month_days' | 'annual_month' | 'annual_day' | 'interval_number' | 'interval_type' | 'start_date' | 'due_date' | 'next_run_date'>>) {
+  if (Number(expense.monthly_amount || 0) > 0) return Number(expense.monthly_amount || 0);
   const amount = Number(expense.amount || 0);
+  const hasAdvancedSchedule = Boolean(expense.recurrence_type || expense.weekdays?.length || expense.month_days?.length || expense.annual_month || expense.interval_number);
+  if (hasAdvancedSchedule) {
+    return calculateRecurrence({
+      amount,
+      frequency: expense.frequency,
+      startDate: expense.start_date || expense.due_date || expense.next_run_date,
+      recurrenceType: expense.recurrence_type,
+      weekdays: expense.weekdays,
+      monthDays: expense.month_days,
+      annualMonth: expense.annual_month,
+      annualDay: expense.annual_day,
+      intervalNumber: expense.interval_number,
+      intervalType: expense.interval_type,
+    }).monthlyAmount;
+  }
   switch (expense.frequency) {
     case 'Diario': return amount * 30;
     case 'Semanal': return amount * 4.33;

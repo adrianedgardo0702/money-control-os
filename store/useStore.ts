@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase, hasSupabaseConfig } from '@/lib/supabase';
+import { calculateNextDueDate, calculateRecurrence } from '@/lib/recurrence';
 
 export type User = {
   id: string;
@@ -36,6 +37,9 @@ export type Transaction = {
   status: string;
   notes?: string;
   date: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string;
+  recurring_expense_id?: string;
   business_id?: string;
   account_id?: string;
 };
@@ -68,12 +72,22 @@ export type RecurringExpense = {
   frequency: string;
   start_date: string;
   next_run_date: string;
+  next_due_date?: string;
   owner_type?: 'personal' | 'business';
   business_unit_id?: string;
   due_date?: string;
   is_required?: boolean;
   is_active?: boolean;
   last_paid_date?: string;
+  monthly_amount?: number;
+  annual_amount?: number;
+  recurrence_type?: string;
+  weekdays?: string[];
+  month_days?: number[];
+  annual_month?: number;
+  annual_day?: number;
+  interval_number?: number;
+  interval_type?: string;
   payment_method?: string;
   mode: string;
   status: string;
@@ -234,12 +248,22 @@ type AppState = {
     frequency: string;
     start_date: string;
     next_run_date: string;
+    next_due_date?: string | null;
     owner_type?: 'personal' | 'business';
     business_unit_id?: string | null;
     due_date?: string | null;
     is_required?: boolean;
     is_active?: boolean;
     last_paid_date?: string | null;
+    monthly_amount?: number;
+    annual_amount?: number;
+    recurrence_type?: string;
+    weekdays?: string[];
+    month_days?: number[];
+    annual_month?: number | null;
+    annual_day?: number | null;
+    interval_number?: number | null;
+    interval_type?: string | null;
     payment_method?: string;
     mode: string;
     business_id?: string | null;
@@ -253,10 +277,20 @@ type AppState = {
     amount: number;
     frequency: string;
     next_run_date: string;
+    next_due_date?: string | null;
     owner_type?: 'personal' | 'business';
     business_unit_id?: string | null;
     due_date?: string | null;
     is_active?: boolean;
+    monthly_amount?: number;
+    annual_amount?: number;
+    recurrence_type?: string;
+    weekdays?: string[];
+    month_days?: number[];
+    annual_month?: number | null;
+    annual_day?: number | null;
+    interval_number?: number | null;
+    interval_type?: string | null;
     payment_method?: string;
     mode?: string;
     business_id?: string | null;
@@ -365,30 +399,6 @@ const parseMoney = (value: number) => {
     throw new Error('El monto debe ser mayor que cero.');
   }
   return amount;
-};
-
-const nextDateByFrequency = (dateValue: string, frequency: string) => {
-  const date = dateValue ? new Date(dateValue) : new Date();
-  if (Number.isNaN(date.getTime())) return new Date().toISOString().split('T')[0];
-  switch (frequency) {
-    case 'Semanal':
-      date.setDate(date.getDate() + 7);
-      break;
-    case 'Quincenal':
-      date.setDate(date.getDate() + 15);
-      break;
-    case 'Anual':
-      date.setFullYear(date.getFullYear() + 1);
-      break;
-    case 'Diario':
-      date.setDate(date.getDate() + 1);
-      break;
-    case 'Mensual':
-    default:
-      date.setMonth(date.getMonth() + 1);
-      break;
-  }
-  return date.toISOString().split('T')[0];
 };
 
 export const useStore = create<AppState>((set, get) => ({
@@ -850,6 +860,19 @@ export const useStore = create<AppState>((set, get) => ({
     if (!input.start_date || !input.next_run_date) throw new Error('Selecciona las fechas del recurrente.');
     if (input.scope === 'negocio' && !input.business_id) throw new Error('Selecciona el negocio del recurrente.');
 
+    const schedule = calculateRecurrence({
+      amount,
+      frequency: input.frequency,
+      startDate: input.start_date,
+      recurrenceType: input.recurrence_type,
+      weekdays: input.weekdays,
+      monthDays: input.month_days,
+      annualMonth: input.annual_month || undefined,
+      annualDay: input.annual_day || undefined,
+      intervalNumber: input.interval_number || undefined,
+      intervalType: input.interval_type || undefined,
+    });
+
     const payload = {
       user_id: user.id,
       name,
@@ -858,13 +881,23 @@ export const useStore = create<AppState>((set, get) => ({
       amount,
       frequency: input.frequency,
       start_date: input.start_date,
-      next_run_date: input.next_run_date,
+      next_run_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      next_due_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
       owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
       business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
-      due_date: input.due_date || input.next_run_date,
+      due_date: input.due_date || input.next_due_date || input.next_run_date || schedule.nextDueDate,
       is_required: input.is_required ?? true,
       is_active: input.is_active ?? true,
       last_paid_date: input.last_paid_date || null,
+      monthly_amount: input.monthly_amount ?? schedule.monthlyAmount,
+      annual_amount: input.annual_amount ?? schedule.annualAmount,
+      recurrence_type: input.recurrence_type || schedule.recurrenceType,
+      weekdays: input.weekdays || [],
+      month_days: input.month_days || [],
+      annual_month: input.annual_month || null,
+      annual_day: input.annual_day || null,
+      interval_number: input.interval_number || null,
+      interval_type: input.interval_type || null,
       payment_method: input.payment_method?.trim() || null,
       mode: input.mode,
       status: input.is_active === false ? 'paused' : 'active',
@@ -922,17 +955,40 @@ export const useStore = create<AppState>((set, get) => ({
     if (!input.category.trim()) throw new Error('La categoria es obligatoria.');
     if (!input.next_run_date) throw new Error('Selecciona la fecha de pago.');
 
+    const schedule = calculateRecurrence({
+      amount,
+      frequency: input.frequency,
+      startDate: input.next_run_date,
+      recurrenceType: input.recurrence_type,
+      weekdays: input.weekdays,
+      monthDays: input.month_days,
+      annualMonth: input.annual_month || undefined,
+      annualDay: input.annual_day || undefined,
+      intervalNumber: input.interval_number || undefined,
+      intervalType: input.interval_type || undefined,
+    });
+
     const payload = {
       name,
       scope: input.scope,
       category: input.category.trim(),
       amount,
       frequency: input.frequency,
-      next_run_date: input.next_run_date,
+      next_run_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      next_due_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
       owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
       business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
-      due_date: input.due_date || input.next_run_date,
+      due_date: input.due_date || input.next_due_date || input.next_run_date || schedule.nextDueDate,
       is_active: input.is_active ?? true,
+      monthly_amount: input.monthly_amount ?? schedule.monthlyAmount,
+      annual_amount: input.annual_amount ?? schedule.annualAmount,
+      recurrence_type: input.recurrence_type || schedule.recurrenceType,
+      weekdays: input.weekdays || [],
+      month_days: input.month_days || [],
+      annual_month: input.annual_month || null,
+      annual_day: input.annual_day || null,
+      interval_number: input.interval_number || null,
+      interval_type: input.interval_type || null,
       payment_method: input.payment_method?.trim() || null,
       mode: input.mode || 'reminder',
       status: input.is_active === false ? 'paused' : 'active',
@@ -989,10 +1045,59 @@ export const useStore = create<AppState>((set, get) => ({
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
     const paidDate = new Date().toISOString().split('T')[0];
-    const nextDate = nextDateByFrequency(expense.due_date || expense.next_run_date, expense.frequency);
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() + 1);
+    const nextDate = calculateNextDueDate({
+      amount: Number(expense.amount || 0),
+      frequency: expense.frequency,
+      startDate: expense.start_date || expense.due_date || expense.next_run_date,
+      recurrenceType: expense.recurrence_type,
+      weekdays: expense.weekdays,
+      monthDays: expense.month_days,
+      annualMonth: expense.annual_month,
+      annualDay: expense.annual_day,
+      intervalNumber: expense.interval_number,
+      intervalType: expense.interval_type,
+    }, fromDate);
+
+    const transactionPayload = {
+      user_id: user.id,
+      business_id: expense.owner_type === 'business' || expense.scope === 'negocio' ? expense.business_id || null : null,
+      account_id: expense.account_id || null,
+      type: 'gasto',
+      scope: expense.scope === 'negocio' ? 'negocio' : 'personal',
+      amount: Number(expense.amount || 0),
+      category: expense.category || 'Gasto fijo',
+      status: 'pagado',
+      notes: `Pago de gasto fijo: ${expense.name}`,
+      owner_type: expense.owner_type || (expense.scope === 'negocio' ? 'business' : 'personal'),
+      business_unit_id: expense.business_unit_id || (expense.scope === 'negocio' ? expense.business_id || null : 'personal'),
+      recurring_expense_id: expense.id
+    };
+
+    const { error: transactionError } = await client.from('transactions').insert(transactionPayload);
+    if (transactionError) {
+      const { owner_type, business_unit_id, recurring_expense_id, ...legacyTransactionPayload } = transactionPayload;
+      const { error: legacyTransactionError } = await client.from('transactions').insert(legacyTransactionPayload);
+      if (legacyTransactionError) throw new Error(getErrorMessage(legacyTransactionError));
+      void owner_type;
+      void business_unit_id;
+      void recurring_expense_id;
+    }
+
+    if (expense.account_id) {
+      const account = get().accounts.find((item) => item.id === expense.account_id);
+      if (account) {
+        const nextBalance = Number(account.current_balance || 0) - Number(expense.amount || 0);
+        const { error: accountError } = await client.from('accounts').update({ current_balance: nextBalance }).eq('id', account.id).eq('user_id', user.id);
+        if (accountError) throw new Error(getErrorMessage(accountError));
+      }
+    }
+
     const payload = {
       last_paid_date: paidDate,
       next_run_date: nextDate,
+      next_due_date: nextDate,
       due_date: nextDate,
       status: 'active',
       is_active: true

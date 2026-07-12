@@ -71,7 +71,7 @@ export function CashflowModule() {
 
   const currentMoney = accounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const expectedIncome = filteredTransactions.filter((transaction) => transaction.type === 'ingreso' && isInSelectedPeriod(transaction.date, period)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const upcomingRecurring = recurringExpenses.filter((expense) => expense.status === 'active' && isUpcoming(expense.next_run_date));
+  const upcomingRecurring = recurringExpenses.filter((expense) => expense.status === 'active' && isUpcoming(expense.next_due_date || expense.due_date || expense.next_run_date));
   const upcomingRecurringTotal = upcomingRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
   const upcomingDebtMinimums = debts.filter((debt) => debt.status !== 'Pagada').reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
   const upcomingOutflows = upcomingRecurringTotal + upcomingDebtMinimums;
@@ -313,7 +313,7 @@ export function CashflowModule() {
           </CardHeader>
           <CardContent className="space-y-4">
             {upcomingRecurring.map((expense) => (
-              <UpcomingItem key={expense.id} title={expense.name} amount={monthlyCost(expense)} date={expense.due_date || expense.next_run_date} />
+              <UpcomingItem key={expense.id} title={expense.name} amount={monthlyCost(expense)} date={expense.next_due_date || expense.due_date || expense.next_run_date} />
             ))}
             {debts.filter((debt) => Number(debt.minimum || 0) > 0).map((debt) => (
               <UpcomingItem key={debt.id} title={debt.name} amount={Number(debt.minimum || 0)} date={debt.due_date || 'Sin fecha'} icon={<CreditCard className="w-4 h-4 text-destructive" />} />

@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { TransactionModal } from './TransactionModal';
 import { TransferModal } from './TransferModal';
+import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
 import { Account, Debt, useStore, Transaction } from '@/store/useStore';
 import { defaultMonthlyTarget, monthlyCost } from '@/lib/financePlanning';
 import { showToast } from '@/lib/toast';
@@ -43,8 +44,7 @@ const paymentMethods = ['Efectivo', 'Yappy', 'Transferencia', 'ACH', 'Tarjeta de
 const initialFixedExpenseForm = {
   name: '',
   amount: '',
-  frequency: 'Mensual',
-  dueDate: today,
+  ...defaultScheduleForm,
   category: 'Otros',
   paymentMethod: '',
   accountId: '',
@@ -157,8 +157,8 @@ export function PersonalBudgetModule() {
   const personalRecurring = personalFixedExpenses.filter((expense) => expense.status === 'active' || expense.is_active);
   const personalRecurringTotal = personalRecurring.reduce((sum, expense) => sum + monthlyCost(expense), 0);
   const pausedFixedExpenses = personalFixedExpenses.filter((expense) => expense.status === 'paused' || expense.is_active === false);
-  const upcomingPersonalFixed = [...personalRecurring].sort((a, b) => String(a.due_date || a.next_run_date).localeCompare(String(b.due_date || b.next_run_date)))[0];
-  const weeklyFixedPayments = personalRecurring.filter((expense) => isWithinDays(expense.due_date || expense.next_run_date, 7)).length;
+  const upcomingPersonalFixed = [...personalRecurring].sort((a, b) => String(a.next_due_date || a.due_date || a.next_run_date).localeCompare(String(b.next_due_date || b.due_date || b.next_run_date)))[0];
+  const weeklyFixedPayments = personalRecurring.filter((expense) => isWithinDays(expense.next_due_date || expense.due_date || expense.next_run_date, 7)).length;
   const highestFixedCategory = highestCategory(personalRecurring);
   const personalDebts = debts.filter((debt) => debt.owner_type === 'personal' || debt.business_unit_id === 'personal' || (debt.category || '').toLowerCase().includes('personal') || !debt.business_id);
   const personalDebtMinimum = personalDebts.reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
@@ -264,8 +264,7 @@ export function PersonalBudgetModule() {
       setFixedForm({
         name: expense.name,
         amount: String(expense.amount || ''),
-        frequency: expense.frequency || 'Mensual',
-        dueDate: expense.due_date || expense.next_run_date || today,
+        ...scheduleFormFromExpense(expense),
         category: expense.category || 'Otros',
         paymentMethod: expense.payment_method || '',
         accountId: expense.account_id || '',
@@ -292,14 +291,12 @@ export function PersonalBudgetModule() {
     setFixedError('');
     try {
       const payload = {
+        ...buildSchedulePayload(fixedForm, Number(fixedForm.amount)),
         name: fixedForm.name,
         scope: 'personal' as const,
         category: fixedForm.category,
         amount: Number(fixedForm.amount),
         frequency: fixedForm.frequency,
-        start_date: fixedForm.dueDate,
-        next_run_date: fixedForm.dueDate,
-        due_date: fixedForm.dueDate,
         owner_type: 'personal' as const,
         business_unit_id: 'personal',
         is_required: true,
@@ -669,7 +666,7 @@ export function PersonalBudgetModule() {
 
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <MiniSummary label="Total mensual" value={money(personalRecurringTotal)} />
-          <MiniSummary label="Proximo pago" value={upcomingPersonalFixed ? money(Number(upcomingPersonalFixed.amount || 0)) : 'Sin pagos'} detail={upcomingPersonalFixed ? `${upcomingPersonalFixed.name} · ${upcomingPersonalFixed.due_date || upcomingPersonalFixed.next_run_date}` : undefined} />
+          <MiniSummary label="Proximo pago" value={upcomingPersonalFixed ? money(Number(upcomingPersonalFixed.amount || 0)) : 'Sin pagos'} detail={upcomingPersonalFixed ? `${upcomingPersonalFixed.name} · ${upcomingPersonalFixed.next_due_date || upcomingPersonalFixed.due_date || upcomingPersonalFixed.next_run_date}` : undefined} />
           <MiniSummary label="Esta semana" value={String(weeklyFixedPayments)} detail="pagos programados" />
           <MiniSummary label="Categoria mas alta" value={highestFixedCategory?.name || 'Sin datos'} detail={highestFixedCategory ? money(highestFixedCategory.total) : undefined} />
           <MiniSummary label="Activos" value={String(personalRecurring.length)} />
@@ -692,7 +689,7 @@ export function PersonalBudgetModule() {
                           </span>
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {money(Number(expense.amount || 0))} · {expense.frequency} · {expense.category || 'Otros'} · Pago: {expense.due_date || expense.next_run_date}
+                          {money(Number(expense.amount || 0))} · {expense.frequency} · {expense.category || 'Otros'} · Pago: {expense.next_due_date || expense.due_date || expense.next_run_date}
                         </p>
                         <p className="mt-1 text-xs text-muted-foreground">Metodo: {expense.payment_method || 'Sin metodo'}{expense.last_paid_date ? ` · Ultimo pago: ${expense.last_paid_date}` : ''}</p>
                       </div>
@@ -978,23 +975,27 @@ export function PersonalBudgetModule() {
                   </select>
                 </Field>
               </div>
+              <RecurringScheduleFields
+                form={fixedForm}
+                amount={fixedForm.amount}
+                name={fixedForm.name}
+                money={money}
+                onChange={(patch) => setFixedForm({ ...fixedForm, ...patch })}
+              />
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Fecha de pago">
-                  <input className="form-field" type="date" value={fixedForm.dueDate} onChange={(event) => setFixedForm({ ...fixedForm, dueDate: event.target.value })} />
-                </Field>
                 <Field label="Categoria">
                   <select className="form-field" value={fixedForm.category} onChange={(event) => setFixedForm({ ...fixedForm, category: event.target.value })}>
                     {fixedCategories.map((category) => <option key={category} value={category}>{category}</option>)}
                   </select>
                 </Field>
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Metodo de pago">
                   <select className="form-field" value={fixedForm.paymentMethod} onChange={(event) => setFixedForm({ ...fixedForm, paymentMethod: event.target.value })}>
                     <option value="">Sin metodo</option>
                     {paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}
                   </select>
                 </Field>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Cuenta asociada">
                   <select className="form-field" value={fixedForm.accountId} onChange={(event) => setFixedForm({ ...fixedForm, accountId: event.target.value })}>
                     <option value="">Opcional</option>

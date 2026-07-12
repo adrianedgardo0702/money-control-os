@@ -9,6 +9,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recha
 import { Account, Debt, Investment, ProtectedFund, RecurringExpense, Transaction, useStore } from '@/store/useStore';
 import { defaultMonthlyTarget, money, monthlyCost } from '@/lib/financePlanning';
 import { showToast } from '@/lib/toast';
+import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
 
 interface BusinessDetailModalProps {
   business: any;
@@ -24,7 +25,7 @@ const frequencies = ['Semanal', 'Quincenal', 'Mensual', 'Anual', 'Personalizado'
 const paymentMethods = ['Efectivo', 'Yappy', 'Transferencia', 'ACH', 'Tarjeta de credito'];
 const priorities = ['Critica', 'Alta', 'Media', 'Baja'];
 
-const initialFixedForm = { name: '', amount: '', frequency: 'Mensual', category: 'publicidad', dueDate: new Date().toISOString().slice(0, 10), paymentMethod: 'Transferencia', accountId: '', isActive: true, notes: '' };
+const initialFixedForm = { name: '', amount: '', ...defaultScheduleForm, category: 'publicidad', paymentMethod: 'Transferencia', accountId: '', isActive: true, notes: '' };
 const initialDebtForm = { name: '', type: 'Prestamo', category: 'Negocio', originalAmount: '', pending: '', paid: '0', minimum: '', dueDate: '', interest: '0', priority: 'Media', status: 'Al dia', risk: 'Medio', notes: '' };
 const initialFundForm = { name: '', amount: '', category: 'inventario', targetDate: '', priority: 'Alta', accountId: '', blockWithdrawals: true, status: 'active', notes: '' };
 const initialInvestmentForm = { name: '', amount: '', category: 'inventario', investmentDate: new Date().toISOString().slice(0, 10), expectedReturn: '', accountId: '', status: 'active', notes: '' };
@@ -113,8 +114,8 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
   const reinvestment = Math.max(0, profit * 0.3);
   const chartData = getChartData(businessTransactions);
   const highestCategory = getHighestFixedCategory(activeFixed);
-  const upcomingFixed = activeFixed.filter((expense) => isWithinDays(expense.due_date || expense.next_run_date, 30));
-  const nextFixed = [...activeFixed].sort((a, b) => String(a.due_date || a.next_run_date).localeCompare(String(b.due_date || b.next_run_date)))[0];
+  const upcomingFixed = activeFixed.filter((expense) => isWithinDays(expense.next_due_date || expense.due_date || expense.next_run_date, 30));
+  const nextFixed = [...activeFixed].sort((a, b) => String(a.next_due_date || a.due_date || a.next_run_date).localeCompare(String(b.next_due_date || b.due_date || b.next_run_date)))[0];
   const targetWeight = businessTargetWeights.find((weight) => weight.business_unit_id === businessId);
   const monthlyRevenueTarget = Number(targetForm.monthlyRevenue || 0);
   const operatingDays = Math.max(1, Number(targetForm.operatingDays || 26));
@@ -145,9 +146,8 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
       setFixedForm({
         name: expense.name || '',
         amount: String(expense.amount || ''),
-        frequency: expense.frequency || 'Mensual',
+        ...scheduleFormFromExpense(expense),
         category: expense.category || 'publicidad',
-        dueDate: expense.due_date || expense.next_run_date || new Date().toISOString().slice(0, 10),
         paymentMethod: expense.payment_method || 'Transferencia',
         accountId: expense.account_id || '',
         isActive: isActiveExpense(expense),
@@ -237,16 +237,14 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
     setError('');
     try {
       const payload = {
+        ...buildSchedulePayload(fixedForm, Number(fixedForm.amount)),
         name: fixedForm.name,
         scope: 'negocio' as const,
         category: fixedForm.category,
         amount: Number(fixedForm.amount),
         frequency: fixedForm.frequency,
-        start_date: fixedForm.dueDate,
-        next_run_date: fixedForm.dueDate,
         owner_type: 'business' as const,
         business_unit_id: businessId,
-        due_date: fixedForm.dueDate,
         is_required: true,
         is_active: fixedForm.isActive,
         payment_method: fixedForm.paymentMethod,
@@ -494,7 +492,7 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
             <SectionShell title="Gastos fijos del negocio" description="Control mensual de obligaciones recurrentes." actions={<Button size="sm" onClick={() => openFixedModal()}><Plus className="mr-2 h-4 w-4" /> Nuevo gasto fijo</Button>}>
               <div className="grid gap-3 md:grid-cols-4">
                 <MiniSummary label="Total mensual" value={fixedTotal} />
-                <MiniSummary label="Proximo pago" text={nextFixed ? `${nextFixed.name}: ${nextFixed.due_date || nextFixed.next_run_date}` : 'Sin pagos'} />
+                <MiniSummary label="Proximo pago" text={nextFixed ? `${nextFixed.name}: ${nextFixed.next_due_date || nextFixed.due_date || nextFixed.next_run_date}` : 'Sin pagos'} />
                 <MiniSummary label="Pagos 30 dias" text={`${upcomingFixed.length}`} />
                 <MiniSummary label="Categoria mas alta" text={highestCategory?.name || 'Sin datos'} />
               </div>
@@ -582,8 +580,16 @@ export function BusinessDetailModal({ business, isOpen, onClose, onRegisterIncom
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Monto"><input className="form-field" type="number" min="0" step="0.01" value={fixedForm.amount} onChange={(event) => setFixedForm({ ...fixedForm, amount: event.target.value })} /></Field>
             <Field label="Frecuencia"><Select value={fixedForm.frequency} options={frequencies} onChange={(value) => setFixedForm({ ...fixedForm, frequency: value })} /></Field>
+          </div>
+          <RecurringScheduleFields
+            form={fixedForm}
+            amount={fixedForm.amount}
+            name={fixedForm.name}
+            money={money}
+            onChange={(patch) => setFixedForm({ ...fixedForm, ...patch })}
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Categoria"><Select value={fixedForm.category} options={fixedCategories} onChange={(value) => setFixedForm({ ...fixedForm, category: value })} /></Field>
-            <Field label="Fecha de pago"><input className="form-field" type="date" value={fixedForm.dueDate} onChange={(event) => setFixedForm({ ...fixedForm, dueDate: event.target.value })} /></Field>
             <Field label="Metodo de pago"><Select value={fixedForm.paymentMethod} options={paymentMethods} onChange={(value) => setFixedForm({ ...fixedForm, paymentMethod: value })} /></Field>
             <Field label="Cuenta asociada"><AccountSelect accounts={businessAccounts} value={fixedForm.accountId} onChange={(value) => setFixedForm({ ...fixedForm, accountId: value })} /></Field>
           </div>
@@ -732,7 +738,7 @@ function MovementList({ transactions }: { transactions: Transaction[] }) {
 
 function FixedExpenseList({ rows, onEdit, onPaid, onToggle, onDelete }: { rows: RecurringExpense[]; onEdit: (expense: RecurringExpense) => void; onPaid: (id: string) => Promise<void>; onToggle: (expense: RecurringExpense) => Promise<void>; onDelete: (id: string) => Promise<void> }) {
   if (rows.length === 0) return <EmptyState text="Este negocio aun no tiene gastos fijos registrados." />;
-  return <div className="space-y-2">{rows.map((expense) => <ActionRow key={expense.id} title={expense.name} detail={`${expense.category || 'Sin categoria'} - ${expense.frequency} - Pago: ${expense.due_date || expense.next_run_date || 'sin fecha'}`} value={money(monthlyCost(expense))} status={isActiveExpense(expense) ? 'Activo' : 'Pausado'} actions={<><IconButton label="Editar" onClick={() => onEdit(expense)} icon={<Pencil className="h-4 w-4" />} /><IconButton label="Pagar" onClick={() => onPaid(expense.id)} icon={<CheckCircle2 className="h-4 w-4" />} /><IconButton label={isActiveExpense(expense) ? 'Pausar' : 'Activar'} onClick={() => onToggle(expense)} icon={isActiveExpense(expense) ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} /><IconButton label="Eliminar" onClick={() => onDelete(expense.id)} icon={<Trash2 className="h-4 w-4" />} danger /></>} />)}</div>;
+  return <div className="space-y-2">{rows.map((expense) => <ActionRow key={expense.id} title={expense.name} detail={`${expense.category || 'Sin categoria'} - ${expense.frequency} - Pago: ${expense.next_due_date || expense.due_date || expense.next_run_date || 'sin fecha'}`} value={money(monthlyCost(expense))} status={isActiveExpense(expense) ? 'Activo' : 'Pausado'} actions={<><IconButton label="Editar" onClick={() => onEdit(expense)} icon={<Pencil className="h-4 w-4" />} /><IconButton label="Pagar" onClick={() => onPaid(expense.id)} icon={<CheckCircle2 className="h-4 w-4" />} /><IconButton label={isActiveExpense(expense) ? 'Pausar' : 'Activar'} onClick={() => onToggle(expense)} icon={isActiveExpense(expense) ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />} /><IconButton label="Eliminar" onClick={() => onDelete(expense.id)} icon={<Trash2 className="h-4 w-4" />} danger /></>} />)}</div>;
 }
 
 function DebtList({ rows, onEdit, onPay, onMarkPaid, onDelete }: { rows: Debt[]; onEdit: (debt: Debt) => void; onPay: (debt: Debt) => void; onMarkPaid: (debt: Debt) => Promise<Debt>; onDelete: (id: string) => Promise<void> }) {

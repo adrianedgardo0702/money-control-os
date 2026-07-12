@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
     business_id UUID REFERENCES public.businesses(id) ON DELETE CASCADE,
     account_id UUID REFERENCES public.accounts(id) ON DELETE CASCADE,
+    owner_type TEXT DEFAULT 'personal',
+    business_unit_id TEXT,
+    recurring_expense_id UUID,
     type TEXT NOT NULL, -- 'ingreso' or 'gasto'
     scope TEXT NOT NULL, -- 'personal' or 'negocio'
     amount NUMERIC(12, 2) NOT NULL,
@@ -75,12 +78,22 @@ CREATE TABLE IF NOT EXISTS public.recurring_expenses (
     frequency TEXT NOT NULL,
     start_date DATE NOT NULL,
     next_run_date DATE NOT NULL,
+    next_due_date DATE,
     owner_type TEXT DEFAULT 'personal',
     business_unit_id TEXT,
     due_date DATE,
     is_required BOOLEAN DEFAULT true,
     is_active BOOLEAN DEFAULT true,
     last_paid_date DATE,
+    monthly_amount NUMERIC(12, 2) DEFAULT 0,
+    annual_amount NUMERIC(12, 2) DEFAULT 0,
+    recurrence_type TEXT,
+    weekdays TEXT[] DEFAULT '{}',
+    month_days INTEGER[] DEFAULT '{}',
+    annual_month INTEGER,
+    annual_day INTEGER,
+    interval_number INTEGER,
+    interval_type TEXT,
     payment_method TEXT,
     mode TEXT NOT NULL,
     status TEXT DEFAULT 'active',
@@ -167,11 +180,14 @@ CREATE INDEX IF NOT EXISTS transactions_user_id_idx ON public.transactions (user
 CREATE INDEX IF NOT EXISTS transactions_business_id_idx ON public.transactions (business_id);
 CREATE INDEX IF NOT EXISTS transactions_account_id_idx ON public.transactions (account_id);
 CREATE INDEX IF NOT EXISTS transactions_date_idx ON public.transactions (date DESC);
+CREATE INDEX IF NOT EXISTS transactions_owner_type_idx ON public.transactions (owner_type);
+CREATE INDEX IF NOT EXISTS transactions_business_unit_id_idx ON public.transactions (business_unit_id);
 CREATE INDEX IF NOT EXISTS protected_funds_user_id_idx ON public.protected_funds (user_id);
 CREATE INDEX IF NOT EXISTS protected_funds_business_id_idx ON public.protected_funds (business_id);
 CREATE INDEX IF NOT EXISTS protected_funds_business_unit_id_idx ON public.protected_funds (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_user_id_idx ON public.recurring_expenses (user_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_next_run_date_idx ON public.recurring_expenses (next_run_date);
+CREATE INDEX IF NOT EXISTS recurring_expenses_next_due_date_idx ON public.recurring_expenses (next_due_date);
 CREATE INDEX IF NOT EXISTS recurring_expenses_business_unit_id_idx ON public.recurring_expenses (business_unit_id);
 CREATE INDEX IF NOT EXISTS recurring_expenses_is_active_idx ON public.recurring_expenses (is_active);
 CREATE INDEX IF NOT EXISTS debts_user_id_idx ON public.debts (user_id);
