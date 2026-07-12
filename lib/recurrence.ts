@@ -92,10 +92,10 @@ export function calculateRecurrence(input: RecurrenceScheduleInput, fromDate = n
 export function calculateNextDueDate(input: RecurrenceScheduleInput, fromDate = new Date()) {
   const frequency = normalizeFrequency(input.frequency);
   const base = startOfDay(fromDate);
-  const startDate = input.startDate ? startOfDay(new Date(input.startDate)) : base;
+  const startDate = input.startDate ? parseLocalDate(input.startDate) : base;
 
   if (frequency === 'weekly') {
-    const selected = (input.weekdays && input.weekdays.length > 0 ? input.weekdays : [weekdayName(base.getDay())])
+    const selected = (input.weekdays && input.weekdays.length > 0 ? input.weekdays : [weekdayName(startDate.getDay())])
       .map((day) => weekdayIndex[day])
       .filter((day) => Number.isInteger(day));
     const offsets = selected.map((day) => {
@@ -117,7 +117,7 @@ export function calculateNextDueDate(input: RecurrenceScheduleInput, fromDate = 
   }
 
   if (frequency === 'monthly') {
-    const days = sanitizeMonthDays(input.monthDays && input.monthDays.length > 0 ? input.monthDays : [dayOrLast(input.annualDay || input.monthDays?.[0] || base.getDate())]);
+    const days = sanitizeMonthDays(input.monthDays && input.monthDays.length > 0 ? input.monthDays : [dayOrLast(input.annualDay || input.monthDays?.[0] || startDate.getDate())]);
     return toDateString(nextMonthDay(base, days));
   }
 
@@ -144,7 +144,7 @@ export function generateDueDates(input: RecurrenceScheduleInput, fromDate = new 
 
   for (let index = 0; index < 80; index += 1) {
     const next = calculateNextDueDate(input, cursor);
-    const nextDate = startOfDay(new Date(next));
+    const nextDate = parseLocalDate(next);
     if (nextDate > end) break;
     if (!dates.includes(next)) dates.push(next);
     cursor = addDays(nextDate, 1);
@@ -239,8 +239,19 @@ function startOfDay(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split('T')[0].split('-').map(Number);
+  if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+    return startOfDay(new Date(year, month - 1, day));
+  }
+  return startOfDay(new Date(value));
+}
+
 function toDateString(date: Date) {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function weekdayName(index: number) {

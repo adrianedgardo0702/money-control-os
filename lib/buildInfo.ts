@@ -1,4 +1,4 @@
 export const buildInfo = {
-  version: '2026.07.12-centro-pagos-personales',
-  label: 'Centro de pagos personales en gastos fijos',
+  version: '2026.07.12-pagos-personales-persistencia',
+  label: 'Persistencia y fechas reales en pagos personales',
 };

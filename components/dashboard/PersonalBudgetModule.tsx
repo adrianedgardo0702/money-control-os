@@ -27,7 +27,7 @@ import { TransferModal } from './TransferModal';
 import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
 import { Account, Debt, RecurringExpense, RecurringExpensePayment, useStore, Transaction } from '@/store/useStore';
 import { defaultMonthlyTarget, monthlyCost } from '@/lib/financePlanning';
-import { generateDueDates } from '@/lib/recurrence';
+import { calculateNextDueDate, generateDueDates } from '@/lib/recurrence';
 import { showToast } from '@/lib/toast';
 
 const money = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -326,6 +326,7 @@ export function PersonalBudgetModule() {
       }
       closeFixedModal();
     } catch (error) {
+      console.error('Supabase fixed expense save failed:', error);
       const message = error instanceof Error ? error.message : 'No se pudo guardar el gasto fijo.';
       setFixedError(message);
       showToast({ type: 'error', title: 'No se pudo guardar', description: message });
@@ -352,6 +353,7 @@ export function PersonalBudgetModule() {
       await markRecurringExpensePaid(expenseId, dueDate);
       showToast({ type: 'success', title: 'Pago registrado correctamente.', description: 'La proxima fecha fue actualizada.' });
     } catch (error) {
+      console.error('Supabase fixed expense payment failed:', error);
       showToast({ type: 'error', title: 'No se pudo marcar pagado', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingFixedId(null);
@@ -368,6 +370,7 @@ export function PersonalBudgetModule() {
       setPostponeTarget(null);
       setCustomPostponeDate('');
     } catch (error) {
+      console.error('Supabase fixed expense postpone failed:', error);
       showToast({ type: 'error', title: 'No se pudo posponer', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingFixedId(null);
@@ -381,6 +384,7 @@ export function PersonalBudgetModule() {
       await skipRecurringExpensePayment(expenseId, dueDate);
       showToast({ type: 'success', title: 'Pago omitido.' });
     } catch (error) {
+      console.error('Supabase fixed expense skip failed:', error);
       showToast({ type: 'error', title: 'No se pudo omitir', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingFixedId(null);
@@ -1311,7 +1315,14 @@ function groupForDiff(daysDiff: number): PaymentOccurrence['group'] {
 function addDaysString(dateValue: string, days: number) {
   const date = parseLocalDate(dateValue);
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return formatDateKey(date);
+}
+
+function formatDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function highestCategory(expenses: { category?: string; amount: number; frequency: string }[]) {
@@ -1354,7 +1365,7 @@ function buildPersonalPaymentOccurrences(expenses: RecurringExpense[], payments:
 
   expenses.forEach((expense) => {
     const isPaused = expense.status === 'paused' || expense.is_active === false;
-    const baseDue = expense.snoozed_until || expense.next_due_date || expense.due_date || expense.next_run_date;
+    const baseDue = resolvePersonalPaymentDueDate(expense, todayDate);
     if (!baseDue) return;
 
     const generated = isPaused ? [baseDue] : [
@@ -1374,10 +1385,10 @@ function buildPersonalPaymentOccurrences(expenses: RecurringExpense[], payments:
     ];
 
     Array.from(new Set(generated)).forEach((dueDate) => {
-      const payment = payments.find((item) => item.recurring_expense_id === expense.id && item.due_date === dueDate && ['paid', 'skipped'].includes(item.status));
+      const payment = payments.find((item) => item.recurring_expense_id === expense.id && item.due_date === dueDate && ['paid', 'skipped', 'postponed'].includes(item.status));
       const daysDiff = diffDays(dueDate, today);
       const status = isPaused ? 'pausado' : payment?.status === 'paid' ? 'pagado' : payment?.status === 'skipped' ? 'omitido' : daysDiff < 0 ? 'vencido' : 'pendiente';
-      if (status === 'pagado' || status === 'omitido') return;
+      if (status === 'pagado' || status === 'omitido' || payment?.status === 'postponed') return;
       items.push({
         id: `${expense.id}-${dueDate}`,
         expense,
@@ -1392,6 +1403,35 @@ function buildPersonalPaymentOccurrences(expenses: RecurringExpense[], payments:
   });
 
   return items.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+}
+
+function resolvePersonalPaymentDueDate(expense: RecurringExpense, fromDate: Date) {
+  if (expense.snoozed_until) return expense.snoozed_until;
+  const storedDate = expense.next_due_date || expense.due_date || expense.next_run_date;
+  if (!hasPersonalSchedule(expense)) return storedDate || null;
+  return calculateNextDueDate({
+    amount: Number(expense.amount || 0),
+    frequency: expense.frequency,
+    startDate: expense.start_date || storedDate || undefined,
+    recurrenceType: expense.recurrence_type,
+    weekdays: expense.weekdays,
+    monthDays: expense.month_days,
+    annualMonth: expense.annual_month,
+    annualDay: expense.annual_day,
+    intervalNumber: expense.interval_number,
+    intervalType: expense.interval_type,
+  }, fromDate);
+}
+
+function hasPersonalSchedule(expense: RecurringExpense) {
+  const frequency = String(expense.frequency || '').toLowerCase();
+  const storedDate = expense.start_date || expense.next_due_date || expense.due_date || expense.next_run_date;
+  if (['weekly', 'semanal'].includes(frequency)) return Boolean(expense.weekdays?.length || storedDate);
+  if (['biweekly', 'quincenal'].includes(frequency)) return Boolean(expense.month_days?.length || storedDate);
+  if (['monthly', 'mensual'].includes(frequency)) return Boolean(expense.month_days?.length || storedDate);
+  if (['annual', 'anual'].includes(frequency)) return Boolean((expense.annual_month && expense.annual_day) || storedDate);
+  if (['custom', 'personalizado'].includes(frequency)) return Boolean(expense.interval_number && expense.interval_type && storedDate);
+  return Boolean(storedDate);
 }
 
 function buildPaymentStats(items: PaymentOccurrence[], payments: RecurringExpensePayment[]) {

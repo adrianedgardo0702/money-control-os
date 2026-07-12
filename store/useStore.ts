@@ -298,6 +298,7 @@ type AppState = {
     category: string;
     amount: number;
     frequency: string;
+    start_date?: string;
     next_run_date: string;
     next_due_date?: string | null;
     owner_type?: 'personal' | 'business';
@@ -423,6 +424,51 @@ const parseMoney = (value: number) => {
     throw new Error('El monto debe ser mayor que cero.');
   }
   return amount;
+};
+
+const parseDateKey = (value: string) => {
+  const [year, month, day] = value.split('T')[0].split('-').map(Number);
+  if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)) {
+    return new Date(year, month - 1, day);
+  }
+  return new Date(value);
+};
+
+const addOneDay = (dateKey: string) => {
+  const date = parseDateKey(dateKey);
+  date.setDate(date.getDate() + 1);
+  return date;
+};
+
+const hasRecurringSchedule = (expense: RecurringExpense) => {
+  const frequency = String(expense.frequency || '').toLowerCase();
+  if (['weekly', 'semanal'].includes(frequency)) return Boolean(expense.weekdays?.length || expense.start_date);
+  if (['biweekly', 'quincenal'].includes(frequency)) return Boolean(expense.month_days?.length || expense.start_date || expense.next_due_date || expense.due_date || expense.next_run_date);
+  if (['monthly', 'mensual'].includes(frequency)) return Boolean(expense.month_days?.length || expense.start_date || expense.next_due_date || expense.due_date || expense.next_run_date);
+  if (['annual', 'anual'].includes(frequency)) return Boolean((expense.annual_month && expense.annual_day) || expense.start_date);
+  if (['custom', 'personalizado'].includes(frequency)) return Boolean(expense.interval_number && expense.interval_type && (expense.start_date || expense.next_due_date || expense.due_date || expense.next_run_date));
+  return Boolean(expense.start_date || expense.next_due_date || expense.due_date || expense.next_run_date);
+};
+
+const calculateExpenseDueDate = (expense: RecurringExpense, fromDate = new Date()) => {
+  if (expense.snoozed_until) return expense.snoozed_until;
+  const storedDate = expense.next_due_date || expense.due_date || expense.next_run_date;
+  if (!hasRecurringSchedule(expense)) {
+    if (storedDate) return storedDate;
+    throw new Error(`El gasto fijo "${expense.name}" no tiene programacion completa.`);
+  }
+  return calculateNextDueDate({
+    amount: Number(expense.amount || 0),
+    frequency: expense.frequency,
+    startDate: expense.start_date || storedDate,
+    recurrenceType: expense.recurrence_type,
+    weekdays: expense.weekdays,
+    monthDays: expense.month_days,
+    annualMonth: expense.annual_month,
+    annualDay: expense.annual_day,
+    intervalNumber: expense.interval_number,
+    intervalType: expense.interval_type,
+  }, fromDate);
 };
 
 export const useStore = create<AppState>((set, get) => ({
@@ -915,11 +961,11 @@ export const useStore = create<AppState>((set, get) => ({
       amount,
       frequency: input.frequency,
       start_date: input.start_date,
-      next_run_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
-      next_due_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      next_run_date: schedule.nextDueDate,
+      next_due_date: schedule.nextDueDate,
       owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
       business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
-      due_date: input.due_date || input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      due_date: schedule.nextDueDate,
       is_required: input.is_required ?? true,
       is_active: input.is_active ?? true,
       last_paid_date: input.last_paid_date || null,
@@ -946,34 +992,7 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) {
-      const legacyPayload = {
-        user_id: payload.user_id,
-        name: payload.name,
-        scope: payload.scope,
-        category: payload.category,
-        amount: payload.amount,
-        frequency: payload.frequency,
-        start_date: payload.start_date,
-        next_run_date: payload.next_run_date,
-        payment_method: payload.payment_method,
-        mode: payload.mode,
-        status: payload.status,
-        business_id: payload.business_id,
-        account_id: payload.account_id,
-        notes: payload.notes
-      };
-      const { data: legacyData, error: legacyError } = await client
-        .from('recurring_expenses')
-        .insert(legacyPayload)
-        .select('*')
-        .single();
-      if (legacyError) throw new Error(getErrorMessage(legacyError));
-      const expense = legacyData as RecurringExpense;
-      set({ recurringExpenses: [...get().recurringExpenses, expense] });
-      await get().fetchInitialData();
-      return expense;
-    }
+    if (error) throw new Error(`Supabase recurring_expenses insert: ${getErrorMessage(error)}`);
     const expense = data as RecurringExpense;
     set({ recurringExpenses: [...get().recurringExpenses, expense] });
     await get().fetchInitialData();
@@ -992,7 +1011,7 @@ export const useStore = create<AppState>((set, get) => ({
     const schedule = calculateRecurrence({
       amount,
       frequency: input.frequency,
-      startDate: input.next_run_date,
+      startDate: input.start_date || input.next_run_date,
       recurrenceType: input.recurrence_type,
       weekdays: input.weekdays,
       monthDays: input.month_days,
@@ -1008,11 +1027,12 @@ export const useStore = create<AppState>((set, get) => ({
       category: input.category.trim(),
       amount,
       frequency: input.frequency,
-      next_run_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
-      next_due_date: input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      start_date: input.start_date || input.next_run_date,
+      next_run_date: schedule.nextDueDate,
+      next_due_date: schedule.nextDueDate,
       owner_type: input.owner_type || (input.scope === 'personal' ? 'personal' : 'business'),
       business_unit_id: input.business_unit_id || (input.scope === 'personal' ? 'personal' : input.business_id || 'shared'),
-      due_date: input.due_date || input.next_due_date || input.next_run_date || schedule.nextDueDate,
+      due_date: schedule.nextDueDate,
       is_active: input.is_active ?? true,
       monthly_amount: input.monthly_amount ?? schedule.monthlyAmount,
       annual_amount: input.annual_amount ?? schedule.annualAmount,
@@ -1039,34 +1059,7 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) {
-      const legacyPayload = {
-        name: payload.name,
-        scope: payload.scope,
-        category: payload.category,
-        amount: payload.amount,
-        frequency: payload.frequency,
-        next_run_date: payload.next_run_date,
-        payment_method: payload.payment_method,
-        mode: payload.mode,
-        status: payload.status,
-        business_id: payload.business_id,
-        account_id: payload.account_id,
-        notes: payload.notes
-      };
-      const { data: legacyData, error: legacyError } = await client
-        .from('recurring_expenses')
-        .update(legacyPayload)
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .select('*')
-        .single();
-      if (legacyError) throw new Error(getErrorMessage(legacyError));
-      const expense = legacyData as RecurringExpense;
-      set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? expense : item) });
-      await get().fetchInitialData();
-      return expense;
-    }
+    if (error) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
 
     const expense = data as RecurringExpense;
     set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? expense : item) });
@@ -1079,9 +1072,8 @@ export const useStore = create<AppState>((set, get) => ({
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
     const paidDate = new Date().toISOString().split('T')[0];
-    const dueDate = dueDateOverride || expense.snoozed_until || expense.next_due_date || expense.due_date || expense.next_run_date || paidDate;
-    const fromDate = new Date(`${dueDate}T00:00:00`);
-    fromDate.setDate(fromDate.getDate() + 1);
+    const dueDate = dueDateOverride || calculateExpenseDueDate(expense);
+    const fromDate = addOneDay(dueDate);
     const nextDate = calculateNextDueDate({
       amount: Number(expense.amount || 0),
       frequency: expense.frequency,
@@ -1115,14 +1107,7 @@ export const useStore = create<AppState>((set, get) => ({
     const { data: transactionData, error: transactionError } = await client.from('transactions').insert(transactionPayload).select('id').single();
     let transactionId = transactionData?.id || null;
     if (transactionError) {
-      const { owner_type, business_unit_id, recurring_expense_id, payment_method, ...legacyTransactionPayload } = transactionPayload;
-      const { data: legacyTransactionData, error: legacyTransactionError } = await client.from('transactions').insert(legacyTransactionPayload).select('id').single();
-      if (legacyTransactionError) throw new Error(getErrorMessage(legacyTransactionError));
-      transactionId = legacyTransactionData?.id || null;
-      void owner_type;
-      void business_unit_id;
-      void recurring_expense_id;
-      void payment_method;
+      throw new Error(`Supabase transactions insert: ${getErrorMessage(transactionError)}`);
     }
 
     if (expense.account_id) {
@@ -1158,13 +1143,10 @@ export const useStore = create<AppState>((set, get) => ({
       notes: `Pago de gasto fijo: ${expense.name}`
     };
     const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
-    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+    if (paymentError) throw new Error(`Supabase recurring_expense_payments insert: ${getErrorMessage(paymentError)}`);
 
     const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
-    if (error) {
-      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: nextDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
-      if (legacyError) throw new Error(getErrorMessage(legacyError));
-    }
+    if (error) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
     set({
       recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item)
     });
@@ -1175,7 +1157,7 @@ export const useStore = create<AppState>((set, get) => ({
     const user = requireSignedUser(get().user);
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
-    const dueDate = dueDateOverride || expense.next_due_date || expense.due_date || expense.next_run_date || new Date().toISOString().split('T')[0];
+    const dueDate = dueDateOverride || calculateExpenseDueDate(expense);
     const payload = {
       next_run_date: untilDate,
       next_due_date: untilDate,
@@ -1199,13 +1181,10 @@ export const useStore = create<AppState>((set, get) => ({
       notes: `Pago pospuesto hasta ${untilDate}: ${expense.name}`
     };
     const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
-    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+    if (paymentError) throw new Error(`Supabase recurring_expense_payments insert: ${getErrorMessage(paymentError)}`);
 
     const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
-    if (error) {
-      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: untilDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
-      if (legacyError) throw new Error(getErrorMessage(legacyError));
-    }
+    if (error) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
     set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item) });
     await get().fetchInitialData();
   },
@@ -1214,9 +1193,8 @@ export const useStore = create<AppState>((set, get) => ({
     const user = requireSignedUser(get().user);
     const expense = get().recurringExpenses.find((item) => item.id === id);
     if (!expense) throw new Error('No se encontro el gasto fijo.');
-    const dueDate = dueDateOverride || expense.next_due_date || expense.due_date || expense.next_run_date || new Date().toISOString().split('T')[0];
-    const fromDate = new Date(`${dueDate}T00:00:00`);
-    fromDate.setDate(fromDate.getDate() + 1);
+    const dueDate = dueDateOverride || calculateExpenseDueDate(expense);
+    const fromDate = addOneDay(dueDate);
     const nextDate = calculateNextDueDate({
       amount: Number(expense.amount || 0),
       frequency: expense.frequency,
@@ -1244,14 +1222,11 @@ export const useStore = create<AppState>((set, get) => ({
       notes: `Pago omitido: ${expense.name}`
     };
     const { error: paymentError } = await client.from('recurring_expense_payments').insert(paymentPayload);
-    if (paymentError) console.warn('Recurring payment history unavailable:', getErrorMessage(paymentError));
+    if (paymentError) throw new Error(`Supabase recurring_expense_payments insert: ${getErrorMessage(paymentError)}`);
 
     const payload = { next_run_date: nextDate, next_due_date: nextDate, due_date: nextDate, snoozed_until: null, status: 'active', is_active: true };
     const { error } = await client.from('recurring_expenses').update(payload).eq('id', id).eq('user_id', user.id);
-    if (error) {
-      const { error: legacyError } = await client.from('recurring_expenses').update({ next_run_date: nextDate, status: 'active' }).eq('id', id).eq('user_id', user.id);
-      if (legacyError) throw new Error(getErrorMessage(legacyError));
-    }
+    if (error) throw new Error(`Supabase recurring_expenses update: ${getErrorMessage(error)}`);
     set({ recurringExpenses: get().recurringExpenses.map((item) => item.id === id ? { ...item, ...payload } : item) });
     await get().fetchInitialData();
   },
