@@ -1,4 +1,4 @@
 export const buildInfo = {
-  version: '2026.07.12-pagos-personales-persistencia',
-  label: 'Persistencia y fechas reales en pagos personales',
+  version: '2026.07.12-hostinger-standalone',
+  label: 'Arranque de produccion standalone y esquema recurrente actualizado',
 };
