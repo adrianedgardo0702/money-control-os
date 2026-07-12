@@ -35,7 +35,7 @@ npm run build
 npm run start
 ```
 
-La configuracion de Next.js usa `output: 'standalone'`, lo que facilita ejecutar la app en un entorno Node.js.
+La configuracion de Next.js usa `output: 'standalone'`. Por eso `npm run start` ejecuta `node .next/standalone/server.js`, que es el servidor correcto para produccion.
 
 ## Base de datos
 
