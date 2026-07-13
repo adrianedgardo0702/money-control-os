@@ -47,6 +47,29 @@ function DashboardApp() {
   const [modalConfig, setModalConfig] = useState<{isOpen: boolean, type: 'ingreso' | 'gasto'}>({ isOpen: false, type: 'ingreso' });
 
   useEffect(() => {
+    document.title = 'Noa Finanzas';
+    try {
+      const currentVersion = buildInfo.version;
+      const previousVersion = window.localStorage.getItem('noa-finanzas-build-version');
+      window.localStorage.setItem('noa-finanzas-build-version', currentVersion);
+      if (previousVersion && previousVersion !== currentVersion) {
+        window.localStorage.removeItem('money-control-os-build-version');
+        if ('caches' in window) {
+          window.caches.keys().then((keys) => {
+            keys
+              .filter((key) => key.toLowerCase().includes('money') || key.toLowerCase().includes('control'))
+              .forEach((key) => window.caches.delete(key));
+          });
+        }
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then((registrations) => {
+            registrations.forEach((registration) => registration.unregister());
+          });
+        }
+      }
+    } catch {
+      // Some browsers block storage in strict privacy modes. The app should continue loading.
+    }
     fetchInitialData();
   }, [fetchInitialData]);
 
