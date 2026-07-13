@@ -63,6 +63,38 @@ export type ProtectedFund = {
   notes?: string;
 };
 
+export type SavingsGoal = {
+  id: string;
+  user_id?: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string | null;
+  name: string;
+  goal_type: string;
+  target_amount: number;
+  current_amount: number;
+  weekly_contribution_target?: number;
+  monthly_contribution_target?: number;
+  target_date?: string | null;
+  priority?: string;
+  account_id?: string | null;
+  is_protected?: boolean;
+  status?: string;
+  notes?: string | null;
+  legacy_fund_id?: string;
+};
+
+export type SavingsGoalContribution = {
+  id: string;
+  user_id?: string;
+  savings_goal_id: string;
+  amount: number;
+  contribution_date: string;
+  account_id?: string | null;
+  payment_method?: string | null;
+  transaction_id?: string | null;
+  notes?: string | null;
+};
+
 export type RecurringExpense = {
   id: string;
   user_id?: string;
@@ -122,21 +154,72 @@ export type Debt = {
   user_id?: string;
   name: string;
   type: string;
+  debt_type?: string;
   category?: string;
   owner_type?: 'personal' | 'business';
   business_unit_id?: string;
   business_id?: string;
   original_amount: number;
   pending: number;
+  current_balance?: number;
   paid: number;
   minimum: number;
+  minimum_payment?: number;
+  recommended_payment?: number;
+  extra_payment?: number;
+  payment_frequency?: string;
   due_date?: string;
   interest: number;
+  interest_rate?: number;
+  interest_rate_type?: string;
+  cut_date?: string;
+  credit_limit?: number;
+  credit_utilization?: number;
+  strategy?: string;
   priority?: string;
   status?: string;
   risk?: string;
   recommendation?: string;
   notes?: string;
+};
+
+export type CreditCard = {
+  id: string;
+  user_id?: string;
+  owner_type?: 'personal' | 'business';
+  business_unit_id?: string | null;
+  debt_id?: string | null;
+  name: string;
+  bank?: string | null;
+  card_type: string;
+  credit_limit: number;
+  current_balance: number;
+  available_credit?: number;
+  credit_utilization?: number;
+  cut_date?: string | null;
+  payment_due_date?: string | null;
+  minimum_payment?: number;
+  recommended_payment?: number;
+  ideal_payment?: number;
+  annual_interest_rate?: number;
+  estimated_monthly_interest?: number;
+  status?: string;
+  account_id?: string | null;
+  notes?: string | null;
+  legacy_account_id?: string;
+};
+
+export type CreditCardPayment = {
+  id: string;
+  user_id?: string;
+  credit_card_id: string;
+  debt_id?: string | null;
+  amount: number;
+  payment_date: string;
+  payment_method?: string | null;
+  account_id?: string | null;
+  transaction_id?: string | null;
+  notes?: string | null;
 };
 
 export type Investment = {
@@ -160,6 +243,11 @@ export type MonthlyTarget = {
   user_id?: string;
   operating_days_per_month: number;
   personal_budget_target: number;
+  free_spending_limit?: number;
+  savings_goal?: number;
+  extra_debt_payment?: number;
+  emergency_fund?: number;
+  budget_mode?: 'conservador' | 'balanceado' | 'agresivo' | string;
   debt_payment_target: number;
   reinvestment_target: number;
   desired_profit: number;
@@ -185,9 +273,13 @@ type AppState = {
   accounts: Account[];
   transactions: Transaction[];
   protectedFunds: ProtectedFund[];
+  savingsGoals: SavingsGoal[];
+  savingsGoalContributions: SavingsGoalContribution[];
   recurringExpenses: RecurringExpense[];
   recurringExpensePayments: RecurringExpensePayment[];
   debts: Debt[];
+  creditCards: CreditCard[];
+  creditCardPayments: CreditCardPayment[];
   investments: Investment[];
   monthlyTarget: MonthlyTarget | null;
   businessTargetWeights: BusinessTargetWeight[];
@@ -262,6 +354,10 @@ type AppState = {
     notes?: string;
   }) => Promise<ProtectedFund>;
   deleteProtectedFund: (id: string) => Promise<void>;
+  createSavingsGoal: (input: Omit<SavingsGoal, 'id' | 'user_id'>) => Promise<SavingsGoal>;
+  updateSavingsGoal: (id: string, input: Omit<SavingsGoal, 'id' | 'user_id'>) => Promise<SavingsGoal>;
+  deleteSavingsGoal: (id: string) => Promise<void>;
+  contributeToSavingsGoal: (id: string, input: { amount: number; contribution_date: string; account_id?: string | null; payment_method?: string | null; notes?: string }) => Promise<void>;
   createRecurringExpense: (input: {
     name: string;
     scope: 'personal' | 'negocio';
@@ -330,16 +426,28 @@ type AppState = {
   createDebt: (input: {
     name: string;
     type: string;
+    debt_type?: string;
     category?: string;
     owner_type?: 'personal' | 'business';
     business_unit_id?: string | null;
     business_id?: string | null;
     original_amount: number;
     pending: number;
+    current_balance?: number;
     paid?: number;
     minimum?: number;
+    minimum_payment?: number;
+    recommended_payment?: number;
+    extra_payment?: number;
+    payment_frequency?: string;
     due_date?: string;
     interest?: number;
+    interest_rate?: number;
+    interest_rate_type?: string;
+    cut_date?: string;
+    credit_limit?: number;
+    credit_utilization?: number;
+    strategy?: string;
     priority?: string;
     status?: string;
     risk?: string;
@@ -349,16 +457,28 @@ type AppState = {
   updateDebt: (id: string, input: {
     name: string;
     type: string;
+    debt_type?: string;
     category?: string;
     owner_type?: 'personal' | 'business';
     business_unit_id?: string | null;
     business_id?: string | null;
     original_amount: number;
     pending: number;
+    current_balance?: number;
     paid?: number;
     minimum?: number;
+    minimum_payment?: number;
+    recommended_payment?: number;
+    extra_payment?: number;
+    payment_frequency?: string;
     due_date?: string;
     interest?: number;
+    interest_rate?: number;
+    interest_rate_type?: string;
+    cut_date?: string;
+    credit_limit?: number;
+    credit_utilization?: number;
+    strategy?: string;
     priority?: string;
     status?: string;
     risk?: string;
@@ -367,6 +487,10 @@ type AppState = {
   }) => Promise<Debt>;
   registerDebtPayment: (id: string, amount: number) => Promise<void>;
   deleteDebt: (id: string) => Promise<void>;
+  createCreditCard: (input: Omit<CreditCard, 'id' | 'user_id'> & { create_linked_debt?: boolean }) => Promise<CreditCard>;
+  updateCreditCard: (id: string, input: Omit<CreditCard, 'id' | 'user_id'> & { create_linked_debt?: boolean }) => Promise<CreditCard>;
+  deleteCreditCard: (id: string) => Promise<void>;
+  registerCreditCardPayment: (id: string, input: { amount: number; payment_date: string; payment_method?: string; account_id?: string | null; notes?: string }) => Promise<void>;
   createInvestment: (input: {
     name: string;
     amount: number;
@@ -499,8 +623,96 @@ const toLegacyRecurringExpensePayload = (payload: Record<string, unknown>) =>
 
 const isMissingSchemaColumnError = (error: unknown) => {
   const message = getErrorMessage(error);
-  return message.includes('Could not find the') && message.includes('column') && message.includes('schema cache');
+  return (
+    (message.includes('Could not find the') && message.includes('column') && message.includes('schema cache')) ||
+    (message.includes('Could not find the table') && message.includes('schema cache'))
+  );
 };
+
+const legacyDebtColumns = [
+  'user_id',
+  'name',
+  'type',
+  'category',
+  'original_amount',
+  'pending',
+  'paid',
+  'minimum',
+  'due_date',
+  'interest',
+  'priority',
+  'status',
+  'risk',
+  'recommendation',
+  'notes',
+  'business_id',
+];
+
+const toLegacyDebtPayload = (payload: Record<string, unknown>) =>
+  Object.fromEntries(legacyDebtColumns.filter((key) => key in payload).map((key) => [key, payload[key]]));
+
+const creditCardColumns = [
+  'user_id',
+  'owner_type',
+  'business_unit_id',
+  'debt_id',
+  'name',
+  'bank',
+  'card_type',
+  'credit_limit',
+  'current_balance',
+  'available_credit',
+  'credit_utilization',
+  'cut_date',
+  'payment_due_date',
+  'minimum_payment',
+  'recommended_payment',
+  'ideal_payment',
+  'annual_interest_rate',
+  'estimated_monthly_interest',
+  'status',
+  'account_id',
+  'notes',
+];
+
+const toCreditCardPayload = (payload: Record<string, unknown>) =>
+  Object.fromEntries(creditCardColumns.filter((key) => key in payload).map((key) => [key, payload[key]]));
+
+const legacyMonthlyTargetColumns = [
+  'user_id',
+  'operating_days_per_month',
+  'personal_budget_target',
+  'debt_payment_target',
+  'reinvestment_target',
+  'desired_profit',
+  'reserve_target',
+  'growth_target',
+  'updated_at',
+];
+
+const toLegacyMonthlyTargetPayload = (payload: Record<string, unknown>) =>
+  Object.fromEntries(legacyMonthlyTargetColumns.filter((key) => key in payload).map((key) => [key, payload[key]]));
+
+const savingsGoalColumns = [
+  'user_id',
+  'owner_type',
+  'business_unit_id',
+  'name',
+  'goal_type',
+  'target_amount',
+  'current_amount',
+  'weekly_contribution_target',
+  'monthly_contribution_target',
+  'target_date',
+  'priority',
+  'account_id',
+  'is_protected',
+  'status',
+  'notes',
+];
+
+const toSavingsGoalPayload = (payload: Record<string, unknown>) =>
+  Object.fromEntries(savingsGoalColumns.filter((key) => key in payload).map((key) => [key, payload[key]]));
 
 export const useStore = create<AppState>((set, get) => ({
   user: null,
@@ -514,9 +726,13 @@ export const useStore = create<AppState>((set, get) => ({
   accounts: [],
   transactions: [],
   protectedFunds: [],
+  savingsGoals: [],
+  savingsGoalContributions: [],
   recurringExpenses: [],
   recurringExpensePayments: [],
   debts: [],
+  creditCards: [],
+  creditCardPayments: [],
   investments: [],
   monthlyTarget: null,
   businessTargetWeights: [],
@@ -567,22 +783,54 @@ export const useStore = create<AppState>((set, get) => ({
           .select('*')
           .eq('user_id', session.user.id)
           .order('due_date', { ascending: false });
+        const savingsResult = await supabase
+          .from('savings_goals')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: true });
+        const savingsContributionsResult = await supabase
+          .from('savings_goal_contributions')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('contribution_date', { ascending: false });
+        const cardsResult = await supabase
+          .from('credit_cards')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: true });
+        const cardPaymentsResult = await supabase
+          .from('credit_card_payments')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('payment_date', { ascending: false });
 
         const optionalTargetError = monthlyTargetResult.error && monthlyTargetResult.error.code !== 'PGRST116';
         const optionalWeightsError = businessWeightsResult.error;
         const optionalPaymentsError = paymentsResult.error;
+        const optionalSavingsError = savingsResult.error;
+        const optionalSavingsContributionsError = savingsContributionsResult.error;
+        const optionalCardsError = cardsResult.error;
+        const optionalCardPaymentsError = cardPaymentsResult.error;
         if (optionalTargetError) console.warn('Monthly targets unavailable:', getErrorMessage(monthlyTargetResult.error));
         if (optionalWeightsError) console.warn('Business target weights unavailable:', getErrorMessage(optionalWeightsError));
         if (optionalPaymentsError) console.warn('Recurring expense payments unavailable:', getErrorMessage(optionalPaymentsError));
+        if (optionalSavingsError) console.warn('Savings goals unavailable:', getErrorMessage(optionalSavingsError));
+        if (optionalSavingsContributionsError) console.warn('Savings goal contributions unavailable:', getErrorMessage(optionalSavingsContributionsError));
+        if (optionalCardsError) console.warn('Credit cards unavailable:', getErrorMessage(optionalCardsError));
+        if (optionalCardPaymentsError) console.warn('Credit card payments unavailable:', getErrorMessage(optionalCardPaymentsError));
 
         set({
           businesses: businesses || [],
           accounts: accounts || [],
           transactions: transactions || [],
           protectedFunds: protectedFunds || [],
+          savingsGoals: optionalSavingsError ? [] : ((savingsResult.data || []) as SavingsGoal[]),
+          savingsGoalContributions: optionalSavingsContributionsError ? [] : ((savingsContributionsResult.data || []) as SavingsGoalContribution[]),
           recurringExpenses: recurringExpenses || [],
           recurringExpensePayments: optionalPaymentsError ? [] : ((paymentsResult.data || []) as RecurringExpensePayment[]),
           debts: debts || [],
+          creditCards: optionalCardsError ? [] : ((cardsResult.data || []) as CreditCard[]),
+          creditCardPayments: optionalCardPaymentsError ? [] : ((cardPaymentsResult.data || []) as CreditCardPayment[]),
           investments: investmentsError ? [] : (investments || []),
           monthlyTarget: optionalTargetError ? null : (monthlyTargetResult.data as MonthlyTarget | null),
           businessTargetWeights: optionalWeightsError ? [] : ((businessWeightsResult.data || []) as BusinessTargetWeight[]),
@@ -596,9 +844,13 @@ export const useStore = create<AppState>((set, get) => ({
           accounts: [],
           transactions: [],
           protectedFunds: [],
+          savingsGoals: [],
+          savingsGoalContributions: [],
           recurringExpenses: [],
           recurringExpensePayments: [],
           debts: [],
+          creditCards: [],
+          creditCardPayments: [],
           investments: [],
           monthlyTarget: null,
           businessTargetWeights: [],
@@ -617,7 +869,7 @@ export const useStore = create<AppState>((set, get) => ({
   signOut: async () => {
     if (supabase) {
       await supabase.auth.signOut();
-      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], recurringExpenses: [], recurringExpensePayments: [], debts: [], investments: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
+      set({ user: null, businesses: [], accounts: [], transactions: [], protectedFunds: [], savingsGoals: [], savingsGoalContributions: [], recurringExpenses: [], recurringExpensePayments: [], debts: [], creditCards: [], creditCardPayments: [], investments: [], monthlyTarget: null, businessTargetWeights: [], lastSyncedAt: null, dataError: null });
     }
   },
   createBusiness: async (input) => {
@@ -960,6 +1212,181 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) throw new Error(getErrorMessage(error));
     set({ protectedFunds: get().protectedFunds.filter((fund) => fund.id !== id) });
     await get().fetchInitialData();
+  },
+  createSavingsGoal: async (input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    const targetAmount = parseMoney(input.target_amount);
+    const currentAmount = Math.max(0, Number(input.current_amount || 0));
+    if (!name) throw new Error('El nombre de la meta es obligatorio.');
+    if (!input.goal_type) throw new Error('Selecciona el tipo de meta.');
+
+    const payload = toSavingsGoalPayload({
+      ...input,
+      user_id: user.id,
+      owner_type: 'personal',
+      business_unit_id: input.business_unit_id || 'personal',
+      target_amount: targetAmount,
+      current_amount: currentAmount,
+      weekly_contribution_target: Number(input.weekly_contribution_target || 0),
+      monthly_contribution_target: Number(input.monthly_contribution_target || 0),
+      target_date: input.target_date || null,
+      account_id: input.account_id || null,
+      is_protected: Boolean(input.is_protected),
+      status: input.status || 'Activa',
+      notes: input.notes?.trim() || null,
+    });
+
+    const { data, error } = await client.from('savings_goals').insert(payload).select('*').single();
+    if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(getErrorMessage(error));
+      const fund = await get().createProtectedFund({
+        name,
+        scope: 'personal',
+        owner_type: 'personal',
+        business_unit_id: 'personal',
+        fund_type: input.goal_type,
+        amount: currentAmount || targetAmount,
+        priority: input.priority || 'Media',
+        target_date: input.target_date || undefined,
+        block_withdrawals: Boolean(input.is_protected),
+        account_id: input.account_id || null,
+        notes: input.notes || '',
+      });
+      return {
+        id: fund.id,
+        legacy_fund_id: fund.id,
+        name: fund.name,
+        goal_type: fund.fund_type,
+        target_amount: Number(input.target_amount || fund.amount || 0),
+        current_amount: Number(input.current_amount || fund.amount || 0),
+        target_date: fund.target_date,
+        priority: fund.priority,
+        account_id: fund.account_id,
+        is_protected: fund.block_withdrawals,
+        status: fund.status === 'active' ? 'Activa' : fund.status,
+        notes: fund.notes,
+      } as SavingsGoal;
+    }
+
+    const goal = data as SavingsGoal;
+    set({ savingsGoals: [...get().savingsGoals, goal] });
+    await get().fetchInitialData();
+    return goal;
+  },
+  updateSavingsGoal: async (id, input) => {
+    if (input.legacy_fund_id) {
+      const fund = await get().updateProtectedFund(input.legacy_fund_id, {
+        name: input.name,
+        scope: 'personal',
+        owner_type: 'personal',
+        business_unit_id: 'personal',
+        fund_type: input.goal_type,
+        amount: Number(input.current_amount || input.target_amount || 0),
+        priority: input.priority || 'Media',
+        target_date: input.target_date || undefined,
+        block_withdrawals: Boolean(input.is_protected),
+        status: input.status === 'Activa' ? 'active' : input.status,
+        account_id: input.account_id || null,
+        notes: input.notes || '',
+      });
+      return { ...input, id: fund.id, legacy_fund_id: fund.id } as SavingsGoal;
+    }
+
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const payload = toSavingsGoalPayload({
+      ...input,
+      owner_type: 'personal',
+      business_unit_id: input.business_unit_id || 'personal',
+      target_amount: Number(input.target_amount || 0),
+      current_amount: Number(input.current_amount || 0),
+      weekly_contribution_target: Number(input.weekly_contribution_target || 0),
+      monthly_contribution_target: Number(input.monthly_contribution_target || 0),
+      target_date: input.target_date || null,
+      account_id: input.account_id || null,
+      is_protected: Boolean(input.is_protected),
+      status: input.status || 'Activa',
+      notes: input.notes?.trim() || null,
+    });
+
+    const { data, error } = await client.from('savings_goals').update(payload).eq('id', id).eq('user_id', user.id).select('*').single();
+    if (error) throw new Error(getErrorMessage(error));
+    const goal = data as SavingsGoal;
+    set({ savingsGoals: get().savingsGoals.map((item) => item.id === id ? goal : item) });
+    await get().fetchInitialData();
+    return goal;
+  },
+  deleteSavingsGoal: async (id) => {
+    const legacy = get().savingsGoals.find((goal) => goal.id === id)?.legacy_fund_id;
+    if (legacy) {
+      await get().deleteProtectedFund(legacy);
+      return;
+    }
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const { error } = await client.from('savings_goals').delete().eq('id', id).eq('user_id', user.id);
+    if (error) throw new Error(getErrorMessage(error));
+    set({ savingsGoals: get().savingsGoals.filter((goal) => goal.id !== id) });
+    await get().fetchInitialData();
+  },
+  contributeToSavingsGoal: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const goal = get().savingsGoals.find((item) => item.id === id);
+    if (!goal) throw new Error('No se encontro la meta.');
+    const amount = parseMoney(input.amount);
+    const nextAmount = Math.min(Number(goal.target_amount || 0), Number(goal.current_amount || 0) + amount);
+    let transactionId: string | null = null;
+
+    if (input.account_id) {
+      const account = get().accounts.find((item) => item.id === input.account_id);
+      if (!account) throw new Error('La cuenta origen no existe.');
+      if (Number(account.current_balance || 0) < amount) throw new Error('La cuenta origen no tiene saldo suficiente.');
+      const { data: transactionData, error: transactionError } = await client.from('transactions').insert({
+        user_id: user.id,
+        type: 'gasto',
+        scope: 'personal',
+        amount,
+        category: 'Ahorro personal',
+        payment_method: input.payment_method || null,
+        account_id: input.account_id,
+        status: 'ahorro',
+        notes: input.notes?.trim() || `Aporte a ${goal.name}`,
+        date: input.contribution_date,
+        owner_type: 'personal',
+      }).select('id').single();
+      if (transactionError) console.warn('Savings contribution transaction unavailable:', getErrorMessage(transactionError));
+      transactionId = (transactionData as { id?: string } | null)?.id || null;
+
+      const { error: accountError } = await client
+        .from('accounts')
+        .update({ current_balance: Number(account.current_balance || 0) - amount })
+        .eq('id', account.id)
+        .eq('user_id', user.id);
+      if (accountError) throw new Error(getErrorMessage(accountError));
+    }
+
+    if (!goal.legacy_fund_id) {
+      const { error: contributionError } = await client.from('savings_goal_contributions').insert({
+        user_id: user.id,
+        savings_goal_id: id,
+        amount,
+        contribution_date: input.contribution_date,
+        account_id: input.account_id || null,
+        payment_method: input.payment_method || null,
+        transaction_id: transactionId,
+        notes: input.notes?.trim() || null,
+      });
+      if (contributionError && !isMissingSchemaColumnError(contributionError)) throw new Error(getErrorMessage(contributionError));
+    }
+
+    await get().updateSavingsGoal(id, {
+      ...goal,
+      current_amount: nextAmount,
+      status: nextAmount >= Number(goal.target_amount || 0) ? 'Completada' : goal.status || 'Activa',
+    });
   },
   createRecurringExpense: async (input) => {
     const client = requireSupabase();
@@ -1320,11 +1747,16 @@ export const useStore = create<AppState>((set, get) => ({
     const payload = {
       user_id: user.id,
       operating_days_per_month: Math.max(1, Number(input.operating_days_per_month || 26)),
-      personal_budget_target: Number(input.personal_budget_target || 0),
-      debt_payment_target: Number(input.debt_payment_target || 0),
+      personal_budget_target: Number(input.free_spending_limit ?? input.personal_budget_target ?? 0),
+      free_spending_limit: Number(input.free_spending_limit ?? input.personal_budget_target ?? 0),
+      savings_goal: Number(input.savings_goal || 0),
+      extra_debt_payment: Number(input.extra_debt_payment || 0),
+      emergency_fund: Number(input.emergency_fund || 0),
+      budget_mode: input.budget_mode || 'balanceado',
+      debt_payment_target: Number(input.extra_debt_payment ?? input.debt_payment_target ?? 0),
       reinvestment_target: Number(input.reinvestment_target || 0),
       desired_profit: Number(input.desired_profit || 0),
-      reserve_target: Number(input.reserve_target || 0),
+      reserve_target: Number(input.emergency_fund ?? input.reserve_target ?? 0),
       growth_target: Number(input.growth_target || 0),
       updated_at: new Date().toISOString()
     };
@@ -1335,7 +1767,19 @@ export const useStore = create<AppState>((set, get) => ({
       .select('*')
       .single();
 
-    if (error) throw new Error(getErrorMessage(error));
+    if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(getErrorMessage(error));
+      const { data: legacyData, error: legacyError } = await client
+        .from('monthly_targets')
+        .upsert(toLegacyMonthlyTargetPayload(payload), { onConflict: 'user_id' })
+        .select('*')
+        .single();
+      if (legacyError) throw new Error(getErrorMessage(legacyError));
+      const legacyTarget = { ...payload, ...(legacyData as object) } as MonthlyTarget;
+      set({ monthlyTarget: legacyTarget });
+      await get().fetchInitialData();
+      return legacyTarget;
+    }
     const target = data as MonthlyTarget;
     set({ monthlyTarget: target });
     await get().fetchInitialData();
@@ -1378,59 +1822,59 @@ export const useStore = create<AppState>((set, get) => ({
     if (!name) throw new Error('El nombre de la deuda es obligatorio.');
     if (!input.type.trim()) throw new Error('El tipo de deuda es obligatorio.');
 
+    const payload = {
+      user_id: user.id,
+      name,
+      type: input.type.trim(),
+      debt_type: input.debt_type || input.type.trim(),
+      category: input.category?.trim() || null,
+      owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
+      business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
+      business_id: input.business_id || null,
+      original_amount: originalAmount,
+      pending,
+      current_balance: input.current_balance ?? pending,
+      paid: Number(input.paid || 0),
+      minimum: Number(input.minimum ?? input.minimum_payment ?? 0),
+      minimum_payment: Number(input.minimum_payment ?? input.minimum ?? 0),
+      recommended_payment: Number(input.recommended_payment || 0),
+      extra_payment: Number(input.extra_payment || 0),
+      payment_frequency: input.payment_frequency || 'Mensual',
+      due_date: input.due_date || null,
+      interest: Number(input.interest ?? input.interest_rate ?? 0),
+      interest_rate: Number(input.interest_rate ?? input.interest ?? 0),
+      interest_rate_type: input.interest_rate_type || 'Anual',
+      cut_date: input.cut_date || null,
+      credit_limit: Number(input.credit_limit || 0),
+      credit_utilization: Number(input.credit_utilization || 0),
+      strategy: input.strategy || 'Metodo avalancha',
+      priority: input.priority || 'Media',
+      status: input.status || 'Al dia',
+      risk: input.risk || 'Medio',
+      recommendation: input.recommendation?.trim() || input.notes?.trim() || null,
+      notes: input.notes?.trim() || null
+    };
+
     const { data, error } = await client
       .from('debts')
-      .insert({
-        user_id: user.id,
-        name,
-        type: input.type.trim(),
-        category: input.category?.trim() || null,
-        owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
-        business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
-        business_id: input.business_id || null,
-        original_amount: originalAmount,
-        pending,
-        paid: Number(input.paid || 0),
-        minimum: Number(input.minimum || 0),
-        due_date: input.due_date || null,
-        interest: Number(input.interest || 0),
-        priority: input.priority || 'Media',
-        status: input.status || 'Al dia',
-        risk: input.risk || 'Medio',
-        recommendation: input.recommendation?.trim() || input.notes?.trim() || null,
-        notes: input.notes?.trim() || null
-      })
+      .insert(payload)
       .select('*')
       .single();
 
     if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(getErrorMessage(error));
       const { data: legacyData, error: legacyError } = await client
         .from('debts')
-        .insert({
-          user_id: user.id,
-          name,
-          type: input.type.trim(),
-          category: input.category?.trim() || null,
-          original_amount: originalAmount,
-          pending,
-          paid: Number(input.paid || 0),
-          minimum: Number(input.minimum || 0),
-          due_date: input.due_date || null,
-          interest: Number(input.interest || 0),
-          priority: input.priority || 'Media',
-          status: input.status || 'Al dia',
-          risk: input.risk || 'Medio',
-          recommendation: input.recommendation?.trim() || input.notes?.trim() || null
-        })
+        .insert(toLegacyDebtPayload(payload))
         .select('*')
         .single();
       if (legacyError) throw new Error(getErrorMessage(legacyError));
-      const debt = legacyData as Debt;
+      const debt = { ...payload, ...(legacyData as object) } as Debt;
       set({ debts: [...get().debts, debt] });
       await get().fetchInitialData();
       return debt;
     }
-    const debt = data as Debt;
+    const debt = { ...payload, ...(data as object) } as Debt;
     set({ debts: [...get().debts, debt] });
     await get().fetchInitialData();
     return debt;
@@ -1448,16 +1892,28 @@ export const useStore = create<AppState>((set, get) => ({
     const payload = {
       name,
       type: input.type.trim(),
+      debt_type: input.debt_type || input.type.trim(),
       category: input.category?.trim() || null,
       owner_type: input.owner_type || (input.business_id ? 'business' : 'personal'),
       business_unit_id: input.business_unit_id || input.business_id || (input.owner_type === 'personal' ? 'personal' : null),
       business_id: input.business_id || null,
       original_amount: originalAmount,
       pending,
+      current_balance: input.current_balance ?? pending,
       paid: Number(input.paid || 0),
-      minimum: Number(input.minimum || 0),
+      minimum: Number(input.minimum ?? input.minimum_payment ?? 0),
+      minimum_payment: Number(input.minimum_payment ?? input.minimum ?? 0),
+      recommended_payment: Number(input.recommended_payment || 0),
+      extra_payment: Number(input.extra_payment || 0),
+      payment_frequency: input.payment_frequency || 'Mensual',
       due_date: input.due_date || null,
-      interest: Number(input.interest || 0),
+      interest: Number(input.interest ?? input.interest_rate ?? 0),
+      interest_rate: Number(input.interest_rate ?? input.interest ?? 0),
+      interest_rate_type: input.interest_rate_type || 'Anual',
+      cut_date: input.cut_date || null,
+      credit_limit: Number(input.credit_limit || 0),
+      credit_utilization: Number(input.credit_utilization || 0),
+      strategy: input.strategy || 'Metodo avalancha',
       priority: input.priority || 'Media',
       status: input.status || (pending <= 0 ? 'Pagada' : 'Al dia'),
       risk: input.risk || 'Medio',
@@ -1474,21 +1930,8 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (error) {
-      const legacyPayload = {
-        name: payload.name,
-        type: payload.type,
-        category: payload.category,
-        original_amount: payload.original_amount,
-        pending: payload.pending,
-        paid: payload.paid,
-        minimum: payload.minimum,
-        due_date: payload.due_date,
-        interest: payload.interest,
-        priority: payload.priority,
-        status: payload.status,
-        risk: payload.risk,
-        recommendation: payload.recommendation
-      };
+      if (!isMissingSchemaColumnError(error)) throw new Error(getErrorMessage(error));
+      const legacyPayload = toLegacyDebtPayload(payload);
       const { data: legacyData, error: legacyError } = await client
         .from('debts')
         .update(legacyPayload)
@@ -1497,30 +1940,58 @@ export const useStore = create<AppState>((set, get) => ({
         .select('*')
         .single();
       if (legacyError) throw new Error(getErrorMessage(legacyError));
-      const debt = legacyData as Debt;
+      const debt = { ...payload, ...(legacyData as object) } as Debt;
       set({ debts: get().debts.map((item) => item.id === id ? debt : item) });
       await get().fetchInitialData();
       return debt;
     }
 
-    const debt = data as Debt;
+    const debt = { ...payload, ...(data as object) } as Debt;
     set({ debts: get().debts.map((item) => item.id === id ? debt : item) });
     await get().fetchInitialData();
     return debt;
   },
   registerDebtPayment: async (id, amountValue) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
     const debt = get().debts.find((item) => item.id === id);
     if (!debt) throw new Error('No se encontro la deuda.');
     const amount = parseMoney(amountValue);
+    if (amount <= 0) throw new Error('El monto del abono debe ser mayor a cero.');
     const nextPaid = Number(debt.paid || 0) + amount;
-    const nextPending = Math.max(0, Number(debt.pending || 0) - amount);
+    const currentBalance = Number(debt.current_balance ?? debt.pending ?? 0);
+    const nextPending = Math.max(0, currentBalance - amount);
+
+    const { error: paymentError } = await client
+      .from('debt_payments')
+      .insert({
+        user_id: user.id,
+        debt_id: id,
+        owner_type: debt.owner_type || 'personal',
+        business_unit_id: debt.business_unit_id || null,
+        amount,
+        payment_date: new Date().toISOString().slice(0, 10),
+        status: 'paid',
+        notes: 'Abono registrado desde Finanzas Personales'
+      });
+    if (paymentError && !isMissingSchemaColumnError(paymentError)) {
+      console.warn('Debt payments history unavailable:', getErrorMessage(paymentError));
+    }
+
     await get().updateDebt(id, {
       ...debt,
       original_amount: Number(debt.original_amount || 0),
       pending: nextPending,
+      current_balance: nextPending,
       paid: nextPaid,
       minimum: Number(debt.minimum || 0),
+      minimum_payment: Number(debt.minimum_payment ?? debt.minimum ?? 0),
+      recommended_payment: Number(debt.recommended_payment || 0),
+      extra_payment: Number(debt.extra_payment || 0),
+      payment_frequency: debt.payment_frequency || 'Mensual',
       interest: Number(debt.interest || 0),
+      interest_rate: Number(debt.interest_rate ?? debt.interest ?? 0),
+      interest_rate_type: debt.interest_rate_type || 'Anual',
       status: nextPending <= 0 ? 'Pagada' : debt.status || 'Al dia'
     });
   },
@@ -1531,6 +2002,192 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) throw new Error(getErrorMessage(error));
     set({ debts: get().debts.filter((debt) => debt.id !== id) });
     await get().fetchInitialData();
+  },
+  createCreditCard: async (input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const name = input.name.trim();
+    if (!name) throw new Error('El nombre de la tarjeta es obligatorio.');
+
+    let debtId = input.debt_id || null;
+    if (input.create_linked_debt && input.card_type === 'Credito' && Number(input.current_balance || 0) > 0) {
+      const debt = await get().createDebt({
+        name,
+        type: 'Tarjeta de credito',
+        debt_type: 'credit_card',
+        category: input.bank || 'Tarjeta de credito',
+        owner_type: 'personal',
+        business_unit_id: 'personal',
+        business_id: null,
+        original_amount: Number(input.credit_limit || input.current_balance || 0),
+        pending: Number(input.current_balance || 0),
+        current_balance: Number(input.current_balance || 0),
+        minimum: Number(input.minimum_payment || 0),
+        minimum_payment: Number(input.minimum_payment || 0),
+        recommended_payment: Number(input.recommended_payment || 0),
+        due_date: input.payment_due_date || undefined,
+        interest: Number(input.annual_interest_rate || 0),
+        interest_rate: Number(input.annual_interest_rate || 0),
+        interest_rate_type: 'Anual',
+        credit_limit: Number(input.credit_limit || 0),
+        credit_utilization: Number(input.credit_utilization || 0),
+        priority: input.status === 'Peligro' ? 'Alta' : input.status === 'Alto uso' ? 'Media' : 'Baja',
+        status: 'Al dia',
+        risk: input.status === 'Peligro' ? 'Alto' : input.status === 'Alto uso' ? 'Medio' : 'Bajo',
+        notes: input.notes || '',
+      });
+      debtId = debt.id;
+    }
+
+    const payload = toCreditCardPayload({
+      ...input,
+      user_id: user.id,
+      debt_id: debtId,
+      owner_type: 'personal',
+      business_unit_id: input.business_unit_id || 'personal',
+      bank: input.bank?.trim() || null,
+      account_id: input.account_id || null,
+      notes: input.notes?.trim() || null,
+    });
+
+    const { data, error } = await client.from('credit_cards').insert(payload).select('*').single();
+    if (error) {
+      if (!isMissingSchemaColumnError(error)) throw new Error(getErrorMessage(error));
+      const account = await get().createAccount({
+        name,
+        type: input.card_type === 'Credito' ? 'Tarjeta de credito personal' : 'Tarjeta personal',
+        bank_name: input.bank || '',
+        current_balance: input.card_type === 'Credito' ? -Math.abs(Number(input.current_balance || 0)) : Number(input.current_balance || 0),
+        is_personal: true,
+        status: input.status || 'active',
+      });
+      return {
+        id: account.id,
+        legacy_account_id: account.id,
+        name: account.name,
+        bank: account.bank_name,
+        card_type: input.card_type,
+        credit_limit: Number(input.credit_limit || 0),
+        current_balance: Number(input.current_balance || account.current_balance || 0),
+        status: input.status,
+      } as CreditCard;
+    }
+
+    const card = data as CreditCard;
+    set({ creditCards: [...get().creditCards, card] });
+    await get().fetchInitialData();
+    return card;
+  },
+  updateCreditCard: async (id, input) => {
+    if (input.legacy_account_id) {
+      const account = await get().updateAccount(input.legacy_account_id, {
+        name: input.name,
+        type: input.card_type === 'Credito' ? 'Tarjeta de credito personal' : 'Tarjeta personal',
+        bank_name: input.bank || '',
+        current_balance: input.card_type === 'Credito' ? -Math.abs(Number(input.current_balance || 0)) : Number(input.current_balance || 0),
+        is_personal: true,
+        status: input.status || 'active',
+      });
+      return { ...input, id: account.id, legacy_account_id: account.id } as CreditCard;
+    }
+
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const payload = toCreditCardPayload({
+      ...input,
+      owner_type: 'personal',
+      business_unit_id: input.business_unit_id || 'personal',
+      bank: input.bank?.trim() || null,
+      account_id: input.account_id || null,
+      notes: input.notes?.trim() || null,
+    });
+    const { data, error } = await client
+      .from('credit_cards')
+      .update(payload)
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .select('*')
+      .single();
+    if (error) throw new Error(getErrorMessage(error));
+
+    if (input.debt_id) {
+      const linkedDebt = get().debts.find((debt) => debt.id === input.debt_id);
+      if (linkedDebt) {
+        await get().updateDebt(input.debt_id, {
+          ...linkedDebt,
+          owner_type: 'personal',
+          business_unit_id: 'personal',
+          business_id: null,
+          original_amount: Number(input.credit_limit || linkedDebt.original_amount || 0),
+          pending: Number(input.current_balance || 0),
+          current_balance: Number(input.current_balance || 0),
+          minimum: Number(input.minimum_payment || 0),
+          minimum_payment: Number(input.minimum_payment || 0),
+          recommended_payment: Number(input.recommended_payment || 0),
+          due_date: input.payment_due_date || undefined,
+          interest: Number(input.annual_interest_rate || 0),
+          interest_rate: Number(input.annual_interest_rate || 0),
+        });
+      }
+    }
+
+    const card = data as CreditCard;
+    set({ creditCards: get().creditCards.map((item) => item.id === id ? card : item) });
+    await get().fetchInitialData();
+    return card;
+  },
+  deleteCreditCard: async (id) => {
+    const legacy = get().creditCards.find((card) => card.id === id)?.legacy_account_id;
+    if (legacy) {
+      await get().deleteAccount(legacy);
+      return;
+    }
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const { error } = await client.from('credit_cards').delete().eq('id', id).eq('user_id', user.id);
+    if (error) throw new Error(getErrorMessage(error));
+    set({ creditCards: get().creditCards.filter((card) => card.id !== id) });
+    await get().fetchInitialData();
+  },
+  registerCreditCardPayment: async (id, input) => {
+    const client = requireSupabase();
+    const user = requireSignedUser(get().user);
+    const card = get().creditCards.find((item) => item.id === id);
+    if (!card) throw new Error('No se encontro la tarjeta.');
+    const amount = parseMoney(input.amount);
+    const nextBalance = Math.max(0, Number(card.current_balance || 0) - amount);
+
+    const transactionPayload = {
+      user_id: user.id,
+      type: 'gasto',
+      scope: 'personal',
+      amount,
+      category: 'Abono a tarjeta',
+      payment_method: input.payment_method || null,
+      account_id: input.account_id || null,
+      status: 'pagado',
+      notes: input.notes?.trim() || `Abono a ${card.name}`,
+      date: input.payment_date,
+      owner_type: 'personal',
+    };
+    const { data: transactionData, error: transactionError } = await client.from('transactions').insert(transactionPayload).select('id').single();
+    if (transactionError) console.warn('Credit card payment transaction unavailable:', getErrorMessage(transactionError));
+    const transactionId = (transactionData as { id?: string } | null)?.id || null;
+
+    const { error: paymentError } = await client.from('credit_card_payments').insert({
+      user_id: user.id,
+      credit_card_id: id,
+      debt_id: card.debt_id || null,
+      amount,
+      payment_date: input.payment_date,
+      payment_method: input.payment_method || null,
+      account_id: input.account_id || null,
+      transaction_id: transactionId,
+      notes: input.notes?.trim() || null,
+    });
+    if (paymentError && !isMissingSchemaColumnError(paymentError)) throw new Error(getErrorMessage(paymentError));
+
+    await get().updateCreditCard(id, { ...card, current_balance: nextBalance });
   },
   createInvestment: async (input) => {
     const client = requireSupabase();

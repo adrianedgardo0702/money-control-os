@@ -1,4 +1,4 @@
 export const buildInfo = {
-  version: '2026.07.12-hostinger-standalone',
-  label: 'Arranque de produccion standalone y esquema recurrente actualizado',
+  version: '2026.07.13-finanzas-personales-completa',
+  label: 'Finanzas Personales con gastos fijos, deudas, tarjetas, presupuesto y ahorro mejorados',
 };

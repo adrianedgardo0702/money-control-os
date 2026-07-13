@@ -21,6 +21,11 @@ export const fixedExpenseCategories = [
 export const defaultMonthlyTarget: Omit<MonthlyTarget, 'id' | 'user_id'> = {
   operating_days_per_month: 26,
   personal_budget_target: 0,
+  free_spending_limit: 0,
+  savings_goal: 0,
+  extra_debt_payment: 0,
+  emergency_fund: 0,
+  budget_mode: 'balanceado',
   debt_payment_target: 0,
   reinvestment_target: 0,
   desired_profit: 0,
@@ -123,7 +128,7 @@ export function buildTargetPlan(input: {
   const target = input.target || defaultMonthlyTarget;
   const debtMinimums = input.debts.filter((debt) => debt.status !== 'Pagada').reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
   const debtPayment = Number(target.debt_payment_target || 0) || debtMinimums;
-  const personalBudget = Number(target.personal_budget_target || 0);
+  const personalBudget = Number(target.free_spending_limit ?? target.personal_budget_target ?? 0);
   const reinvestment = Number(target.reinvestment_target || 0);
   const desiredProfit = Number(target.desired_profit || 0);
   const reserve = Number(target.reserve_target || 0);

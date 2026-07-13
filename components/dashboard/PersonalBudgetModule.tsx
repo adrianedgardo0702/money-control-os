@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -10,7 +10,9 @@ import {
   PiggyBank,
   Zap,
   Calendar,
+  AlertCircle,
   CheckCircle2,
+  ChevronDown,
   Plus,
   ArrowDownRight,
   ArrowUpRight,
@@ -25,8 +27,10 @@ import {
 import { TransactionModal } from './TransactionModal';
 import { TransferModal } from './TransferModal';
 import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
-import { Account, Debt, RecurringExpense, RecurringExpensePayment, useStore, Transaction } from '@/store/useStore';
+import { Account, CreditCard as StoredCreditCard, Debt, RecurringExpense, RecurringExpensePayment, SavingsGoal, useStore, Transaction } from '@/store/useStore';
 import { defaultMonthlyTarget, monthlyCost } from '@/lib/financePlanning';
+import { buildDebtRecommendation, calculateDebtPayoffPlan, compareDebtPaymentScenarios, getCreditUtilization, getDebtInterestRate, getDebtMinimumPayment, getDebtRisk, getUtilizationStatus } from '@/lib/debtPlanning';
+import { calculateCreditCardMetrics, getCardPriority, getCardStatusClasses } from '@/lib/creditCards';
 import { calculateNextDueDate, generateDueDates } from '@/lib/recurrence';
 import { showToast } from '@/lib/toast';
 
@@ -35,9 +39,25 @@ const today = formatDateKey(new Date());
 
 const initialGoalForm = {
   name: '',
-  amount: '',
+  goalType: 'Fondo de emergencia',
+  targetAmount: '',
+  currentAmount: '',
+  weeklyContribution: '',
+  monthlyContribution: '',
   targetDate: '',
+  priority: 'Media',
   accountId: '',
+  isProtected: true,
+  status: 'Activa',
+  notes: '',
+};
+
+const initialGoalContributionForm = {
+  amount: '',
+  contributionDate: today,
+  accountId: '',
+  paymentMethod: '',
+  notes: '',
 };
 
 const fixedCategories = ['Comida', 'Transporte', 'Gasolina', 'Telefono', 'Internet', 'Gimnasio', 'Suscripciones', 'Salidas', 'Familia', 'Pareja', 'Deudas personales', 'Salud', 'Otros'];
@@ -66,13 +86,20 @@ const personalViewOptions = [
 
 const initialDebtForm = {
   name: '',
-  type: 'Personal',
+  type: 'Tarjeta de credito',
   category: 'Deudas personales',
   originalAmount: '',
   pending: '',
+  interestRate: '',
+  interestRateType: 'Anual',
   minimum: '',
+  recommendedPayment: '',
+  extraPayment: '',
+  paymentFrequency: 'Mensual',
   dueDate: today,
-  interest: '',
+  cutDate: '',
+  creditLimit: '',
+  strategy: 'Metodo avalancha',
   priority: 'Media',
   status: 'Al dia',
   risk: 'Medio',
@@ -82,8 +109,35 @@ const initialDebtForm = {
 const initialCardForm = {
   name: '',
   bankName: '',
+  cardType: 'Credito',
+  creditLimit: '',
   balance: '',
+  cutDate: '',
+  paymentDueDate: '',
+  minimumPayment: '',
+  recommendedPayment: '',
+  idealPayment: '',
+  annualInterestRate: '',
+  accountId: '',
+  createLinkedDebt: true,
   status: 'active',
+  notes: '',
+};
+
+const initialCardPaymentForm = {
+  amount: '',
+  paymentDate: today,
+  paymentMethod: '',
+  accountId: '',
+  notes: '',
+};
+
+const initialBudgetForm = {
+  freeSpendingLimit: '',
+  savingsGoal: '',
+  extraDebtPayment: '',
+  emergencyFund: '',
+  budgetMode: 'balanceado',
 };
 
 export function PersonalBudgetModule() {
@@ -91,15 +145,21 @@ export function PersonalBudgetModule() {
     accounts,
     transactions,
     protectedFunds,
+    savingsGoals,
+    savingsGoalContributions,
     recurringExpenses,
     recurringExpensePayments,
     debts,
+    creditCards,
+    creditCardPayments,
     businesses,
     monthlyTarget,
     transferFunds,
     createProtectedFund,
-    updateProtectedFund,
-    deleteProtectedFund,
+    createSavingsGoal,
+    updateSavingsGoal,
+    deleteSavingsGoal,
+    contributeToSavingsGoal,
     createRecurringExpense,
     updateRecurringExpense,
     updateRecurringExpenseStatus,
@@ -111,9 +171,10 @@ export function PersonalBudgetModule() {
     updateDebt,
     registerDebtPayment,
     deleteDebt,
-    createAccount,
-    updateAccount,
-    deleteAccount,
+    createCreditCard,
+    updateCreditCard,
+    deleteCreditCard,
+    registerCreditCardPayment,
     upsertMonthlyTarget,
   } = useStore();
   const [period, setPeriod] = useState('this_week');
@@ -127,6 +188,8 @@ export function PersonalBudgetModule() {
   const [goalError, setGoalError] = useState('');
   const [savingGoal, setSavingGoal] = useState(false);
   const [workingGoalId, setWorkingGoalId] = useState<string | null>(null);
+  const [contributingGoalId, setContributingGoalId] = useState<string | null>(null);
+  const [goalContributionForm, setGoalContributionForm] = useState(initialGoalContributionForm);
   const [fixedModalOpen, setFixedModalOpen] = useState(false);
   const [fixedForm, setFixedForm] = useState(initialFixedExpenseForm);
   const [editingFixedId, setEditingFixedId] = useState<string | null>(null);
@@ -141,23 +204,60 @@ export function PersonalBudgetModule() {
   const [payingDebtId, setPayingDebtId] = useState<string | null>(null);
   const [debtPaymentAmount, setDebtPaymentAmount] = useState('');
   const [workingDebtId, setWorkingDebtId] = useState<string | null>(null);
+  const [debtStrategy, setDebtStrategy] = useState<'Avalancha' | 'Bola de nieve' | 'Personalizado'>('Avalancha');
+  const [expandedDebtId, setExpandedDebtId] = useState<string | null>(null);
   const [cardModalOpen, setCardModalOpen] = useState(false);
   const [cardForm, setCardForm] = useState(initialCardForm);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [cardError, setCardError] = useState('');
   const [savingCard, setSavingCard] = useState(false);
   const [workingCardId, setWorkingCardId] = useState<string | null>(null);
-  const [budgetDraft, setBudgetDraft] = useState('');
+  const [payingCardId, setPayingCardId] = useState<string | null>(null);
+  const [cardPaymentForm, setCardPaymentForm] = useState(initialCardPaymentForm);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
+  const [budgetForm, setBudgetForm] = useState(initialBudgetForm);
   const [budgetError, setBudgetError] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
   const [postponeTarget, setPostponeTarget] = useState<{ expenseId: string; dueDate: string; name: string } | null>(null);
   const [customPostponeDate, setCustomPostponeDate] = useState('');
 
   const personalAccounts = accounts.filter((account) => account.is_personal);
-  const personalCards = personalAccounts.filter((account) => account.type.toLowerCase().includes('tarjeta'));
+  const legacyCardAccounts = personalAccounts.filter((account) => account.type.toLowerCase().includes('tarjeta'));
+  const personalCards = [
+    ...creditCards.filter((card) => card.owner_type === 'personal' || card.business_unit_id === 'personal' || !card.owner_type),
+    ...legacyCardAccounts
+      .filter((account) => !creditCards.some((card) => card.account_id === account.id || card.legacy_account_id === account.id))
+      .map((account) => ({
+        id: account.id,
+        legacy_account_id: account.id,
+        name: account.name,
+        bank: account.bank_name || '',
+        card_type: account.type.toLowerCase().includes('credito') ? 'Credito' : 'Debito',
+        credit_limit: account.type.toLowerCase().includes('credito') ? Math.abs(Number(account.current_balance || 0)) : 0,
+        current_balance: Math.abs(Number(account.current_balance || 0)),
+        available_credit: 0,
+        credit_utilization: account.type.toLowerCase().includes('credito') ? 100 : 0,
+        minimum_payment: 0,
+        recommended_payment: 0,
+        ideal_payment: 0,
+        annual_interest_rate: 0,
+        estimated_monthly_interest: 0,
+        status: account.status || 'active',
+        account_id: account.id,
+      } as StoredCreditCard)),
+  ];
+  const creditPersonalCards = personalCards.filter((card) => card.card_type === 'Credito');
+  const cardKpis = buildCardKpis(creditPersonalCards);
+  const cardPaymentGroups = groupCardPayments(creditPersonalCards);
   const businessAccounts = accounts.filter((account) => !account.is_personal);
   const personalTransactions = transactions.filter((transaction) => transaction.scope === 'personal');
   const monthlyExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto' && isCurrentMonth(transaction.date)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const monthlyVariableExpenses = personalTransactions
+    .filter((transaction) => transaction.type === 'gasto' && isCurrentMonth(transaction.date) && isPersonalVariableExpense(transaction))
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const weeklyVariableExpenses = personalTransactions
+    .filter((transaction) => transaction.type === 'gasto' && isCurrentWeek(transaction.date) && isPersonalVariableExpense(transaction))
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
   const personalMoney = personalAccounts.reduce((sum, account) => sum + Number(account.current_balance), 0);
   const personalFixedExpenses = recurringExpenses.filter((expense) => expense.scope === 'personal' || expense.owner_type === 'personal' || expense.business_unit_id === 'personal');
   const personalRecurring = personalFixedExpenses.filter((expense) => expense.status === 'active' || expense.is_active);
@@ -171,11 +271,61 @@ export function PersonalBudgetModule() {
   const weeklyFixedPayments = personalRecurring.filter((expense) => isWithinDays(expense.next_due_date || expense.due_date || expense.next_run_date, 7)).length;
   const highestFixedCategory = highestCategory(personalRecurring);
   const personalDebts = debts.filter((debt) => debt.owner_type === 'personal' || debt.business_unit_id === 'personal' || (debt.category || '').toLowerCase().includes('personal') || !debt.business_id);
-  const personalDebtMinimum = personalDebts.reduce((sum, debt) => sum + Number(debt.minimum || 0), 0);
-  const personalSavings = protectedFunds.filter((fund) => fund.scope === 'personal' && fund.status === 'active').reduce((sum, fund) => sum + Number(fund.amount), 0);
-  const personalGoals = protectedFunds.filter((fund) => fund.scope === 'personal' || fund.owner_type === 'personal' || fund.business_unit_id === 'personal');
+  const personalDebtMinimum = personalDebts.reduce((sum, debt) => sum + getDebtMinimumPayment(debt), 0);
+  const openPersonalDebts = personalDebts.filter((debt) => debt.status !== 'Pagada' && Number(debt.current_balance ?? debt.pending ?? 0) > 0);
+  const personalDebtBalance = openPersonalDebts.reduce((sum, debt) => sum + Number(debt.current_balance ?? debt.pending ?? 0), 0);
+  const personalDebtRecommended = openPersonalDebts.reduce((sum, debt) => sum + Number(debt.recommended_payment || debt.minimum_payment || debt.minimum || 0), 0);
+  const averageDebtInterest = openPersonalDebts.length > 0 ? openPersonalDebts.reduce((sum, debt) => sum + getDebtInterestRate(debt), 0) / openPersonalDebts.length : 0;
+  const highestInterestDebt = [...openPersonalDebts].sort((a, b) => getDebtInterestRate(b) - getDebtInterestRate(a))[0];
+  const smallestDebt = [...openPersonalDebts].sort((a, b) => Number(a.current_balance ?? a.pending ?? 0) - Number(b.current_balance ?? b.pending ?? 0))[0];
+  const urgentDebt = [...openPersonalDebts].sort((a, b) => String(a.due_date || '9999-12-31').localeCompare(String(b.due_date || '9999-12-31')))[0];
+  const debtPlanTarget = debtStrategy === 'Bola de nieve' ? smallestDebt : highestInterestDebt;
+  const debtStrategyMessage = openPersonalDebts.length === 0
+    ? 'Sin deudas abiertas para ordenar.'
+    : debtStrategy === 'Bola de nieve'
+      ? `Paga el minimo en todas tus deudas y dirige el extra a ${debtPlanTarget?.name || 'la deuda mas pequena'} porque es la mas pequena.`
+      : `Paga el minimo en todas tus deudas y dirige el extra a ${debtPlanTarget?.name || 'la deuda con mayor interes'} porque tiene la tasa mas alta.`;
+  const generalDebtPayoff = openPersonalDebts
+    .map((debt) => calculateDebtPayoffPlan(debt, Number(debt.recommended_payment || debt.minimum_payment || debt.minimum || 0)))
+    .filter((plan) => plan.monthsToPayoff)
+    .sort((a, b) => Number(b.monthsToPayoff || 0) - Number(a.monthsToPayoff || 0))[0];
+  const savedFreeSpendingLimit = Number(monthlyTarget?.free_spending_limit ?? monthlyTarget?.personal_budget_target ?? 0);
+  const savedSavingsGoal = Number(monthlyTarget?.savings_goal ?? 0);
+  const savedExtraDebtPayment = Number(monthlyTarget?.extra_debt_payment ?? monthlyTarget?.debt_payment_target ?? 0);
+  const savedEmergencyFund = Number(monthlyTarget?.emergency_fund ?? monthlyTarget?.reserve_target ?? 0);
+  const savedBudgetMode = monthlyTarget?.budget_mode || 'balanceado';
+  const legacySavingsGoals = protectedFunds
+    .filter((fund) => fund.scope === 'personal' || fund.owner_type === 'personal' || fund.business_unit_id === 'personal')
+    .filter((fund) => !savingsGoals.some((goal) => goal.legacy_fund_id === fund.id))
+    .map((fund) => ({
+      id: fund.id,
+      legacy_fund_id: fund.id,
+      name: fund.name,
+      goal_type: fund.fund_type || 'Reserva personal',
+      target_amount: Number(fund.amount || 0),
+      current_amount: Number(fund.amount || 0),
+      weekly_contribution_target: 0,
+      monthly_contribution_target: 0,
+      target_date: fund.target_date || null,
+      priority: fund.priority || 'Media',
+      account_id: fund.account_id || null,
+      is_protected: Boolean(fund.block_withdrawals),
+      status: fund.status === 'active' ? 'Activa' : fund.status || 'Activa',
+      notes: fund.notes || null,
+    } as SavingsGoal));
+  const personalGoals = [
+    ...savingsGoals.filter((goal) => goal.owner_type === 'personal' || goal.business_unit_id === 'personal' || !goal.owner_type),
+    ...legacySavingsGoals,
+  ];
+  const activeSavingsGoals = personalGoals.filter((goal) => goal.status !== 'Pausada' && goal.status !== 'Completada');
+  const personalSavings = personalGoals.filter((goal) => goal.is_protected && goal.status !== 'Pausada').reduce((sum, goal) => sum + Number(goal.current_amount || 0), 0);
+  const personalIncomeMonth = personalTransactions.filter((transaction) => transaction.type === 'ingreso' && isCurrentMonth(transaction.date)).reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0);
+  const recommendedSaving = savedFreeSpendingLimit > 0
+    ? personalIncomeMonth > 0
+      ? Math.max(0, personalIncomeMonth - personalRecurringTotal - personalDebtMinimum - savedFreeSpendingLimit)
+      : savedFreeSpendingLimit * 0.1
+    : 0;
   const safeWeeklyLimit = Math.max(0, (personalMoney - personalRecurringTotal - personalDebtMinimum - personalSavings) / 4);
-  const recommendedSaving = personalMoney > 0 ? Math.max(0, personalMoney - monthlyExpenses - personalDebtMinimum) * 0.1 : 0;
   const businessSafeWithdrawal = businesses.reduce((sum, business) => {
     const available = businessAccounts.filter((account) => account.business_id === business.id).reduce((total, account) => total + Number(account.current_balance), 0);
     const committed = protectedFunds.filter((fund) => fund.business_id === business.id && fund.status === 'active').reduce((total, fund) => total + Number(fund.amount), 0);
@@ -184,8 +334,31 @@ export function PersonalBudgetModule() {
   const hasPersonalData = personalAccounts.length > 0 || personalTransactions.length > 0 || personalRecurring.length > 0 || personalDebts.length > 0 || personalSavings > 0;
   const recentExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto').slice(0, 6);
   const recentIncome = personalTransactions.filter((transaction) => transaction.type === 'ingreso').slice(0, 6);
-  const personalFixedLoad = personalRecurringTotal + personalDebtMinimum + recommendedSaving;
+  const personalFixedLoad = personalRecurringTotal + personalDebtMinimum + personalSavings;
   const estimatedFreeUse = Math.max(0, personalMoney - personalFixedLoad);
+  const budgetConfigured = savedFreeSpendingLimit > 0;
+  const budgetWeeklyLimit = savedFreeSpendingLimit / 4.333;
+  const budgetDailyLimit = savedFreeSpendingLimit / 30;
+  const budgetAvailableMonth = savedFreeSpendingLimit - monthlyVariableExpenses;
+  const budgetUsedPercent = savedFreeSpendingLimit > 0 ? (monthlyVariableExpenses / savedFreeSpendingLimit) * 100 : 0;
+  const budgetWeeklyAvailable = budgetWeeklyLimit - weeklyVariableExpenses;
+  const personalCardsMinimum = creditPersonalCards.reduce((sum, card) => sum + Number(card.minimum_payment || 0), 0);
+  const budgetNoaDecision = buildBudgetDecision({
+    configured: budgetConfigured,
+    availableMonth: budgetAvailableMonth,
+    weeklyAvailable: budgetWeeklyAvailable,
+    usedPercent: budgetUsedPercent,
+  });
+  const savingsTotalTarget = personalGoals.reduce((sum, goal) => sum + Number(goal.target_amount || 0), 0);
+  const savingsCurrentTotal = personalGoals.reduce((sum, goal) => sum + Number(goal.current_amount || 0), 0);
+  const savingsMissingTotal = Math.max(0, savingsTotalTarget - savingsCurrentTotal);
+  const savingsProgress = savingsTotalTarget > 0 ? Math.min(100, (savingsCurrentTotal / savingsTotalTarget) * 100) : 0;
+  const urgentSavingsGoal = [...activeSavingsGoals].sort((a, b) => {
+    if (a.priority === 'Alta' && b.priority !== 'Alta') return -1;
+    if (b.priority === 'Alta' && a.priority !== 'Alta') return 1;
+    return String(a.target_date || '9999-12-31').localeCompare(String(b.target_date || '9999-12-31'));
+  })[0];
+  const monthlySavingsTarget = savedSavingsGoal || activeSavingsGoals.reduce((sum, goal) => sum + Number(goal.monthly_contribution_target || 0), 0);
 
   const businessWithdrawals = businesses.map((business) => {
     const available = businessAccounts.filter((account) => account.business_id === business.id).reduce((sum, account) => sum + Number(account.current_balance), 0);
@@ -193,6 +366,28 @@ export function PersonalBudgetModule() {
     const safe = Math.max(0, available - committed);
     return { ...business, available, committed, safe };
   });
+  const debtFormPlanInput = {
+    name: debtForm.name,
+    pending: Number(debtForm.pending || 0),
+    current_balance: Number(debtForm.pending || 0),
+    minimum: Number(debtForm.minimum || 0),
+    minimum_payment: Number(debtForm.minimum || 0),
+    recommended_payment: Number(debtForm.recommendedPayment || debtForm.minimum || 0),
+    interest: Number(debtForm.interestRate || 0),
+    interest_rate: Number(debtForm.interestRate || 0),
+    interest_rate_type: debtForm.interestRateType,
+    credit_limit: Number(debtForm.creditLimit || 0),
+    status: debtForm.status,
+    priority: debtForm.priority,
+  };
+  const debtFormPlan = calculateDebtPayoffPlan(debtFormPlanInput, Number(debtForm.recommendedPayment || debtForm.minimum || 0));
+  const debtFormScenarios = compareDebtPaymentScenarios(debtFormPlanInput, Number(debtForm.recommendedPayment || debtForm.minimum || 0));
+  const cardFormMetrics = calculateCreditCardMetrics({
+    credit_limit: Number(cardForm.creditLimit || 0),
+    current_balance: Number(cardForm.balance || 0),
+    annual_interest_rate: Number(cardForm.annualInterestRate || 0),
+  });
+  const isCreditCardForm = cardForm.cardType === 'Credito';
 
   const resetGoalModal = () => {
     setGoalForm(initialGoalForm);
@@ -201,14 +396,22 @@ export function PersonalBudgetModule() {
     setShowGoalModal(false);
   };
 
-  const openGoalModal = (fund?: typeof personalGoals[number]) => {
-    if (fund) {
-      setEditingGoalId(fund.id);
+  const openGoalModal = (goal?: SavingsGoal) => {
+    if (goal) {
+      setEditingGoalId(goal.id);
       setGoalForm({
-        name: fund.name,
-        amount: String(fund.amount || ''),
-        targetDate: fund.target_date || '',
-        accountId: fund.account_id || '',
+        name: goal.name,
+        goalType: goal.goal_type || 'Fondo de emergencia',
+        targetAmount: String(goal.target_amount || ''),
+        currentAmount: String(goal.current_amount || ''),
+        weeklyContribution: String(goal.weekly_contribution_target || ''),
+        monthlyContribution: String(goal.monthly_contribution_target || ''),
+        targetDate: goal.target_date || '',
+        priority: goal.priority || 'Media',
+        accountId: goal.account_id || '',
+        isProtected: goal.is_protected !== false,
+        status: goal.status || 'Activa',
+        notes: goal.notes || '',
       });
     } else {
       setEditingGoalId(null);
@@ -229,22 +432,27 @@ export function PersonalBudgetModule() {
     try {
       const payload = {
         name: goalForm.name,
-        scope: 'personal' as const,
         owner_type: 'personal' as const,
         business_unit_id: 'personal',
-        fund_type: 'Ahorro personal',
-        amount: Number(goalForm.amount),
-        priority: 'Media',
+        goal_type: goalForm.goalType,
+        target_amount: Number(goalForm.targetAmount || 0),
+        current_amount: Number(goalForm.currentAmount || 0),
+        weekly_contribution_target: Number(goalForm.weeklyContribution || 0),
+        monthly_contribution_target: Number(goalForm.monthlyContribution || 0),
         target_date: goalForm.targetDate,
-        block_withdrawals: true,
+        priority: goalForm.priority,
         account_id: goalForm.accountId || null,
+        is_protected: goalForm.isProtected,
+        status: goalForm.status,
+        notes: goalForm.notes,
       };
       if (editingGoalId) {
-        await updateProtectedFund(editingGoalId, payload);
+        const currentGoal = personalGoals.find((goal) => goal.id === editingGoalId);
+        await updateSavingsGoal(editingGoalId, { ...payload, legacy_fund_id: currentGoal?.legacy_fund_id });
         showToast({ type: 'success', title: 'Meta de ahorro actualizada' });
       } else {
-        await createProtectedFund(payload);
-        showToast({ type: 'success', title: 'Meta de ahorro creada', description: 'Se guardo como reserva personal.' });
+        await createSavingsGoal(payload);
+        showToast({ type: 'success', title: 'Meta de ahorro creada' });
       }
       resetGoalModal();
     } catch (error) {
@@ -256,13 +464,57 @@ export function PersonalBudgetModule() {
     }
   };
 
-  const handleDeleteGoal = async (fundId: string) => {
-    setWorkingGoalId(fundId);
+  const handleDeleteGoal = async (goalId: string) => {
+    setWorkingGoalId(goalId);
     try {
-      await deleteProtectedFund(fundId);
+      await deleteSavingsGoal(goalId);
       showToast({ type: 'success', title: 'Meta de ahorro eliminada' });
     } catch (error) {
       showToast({ type: 'error', title: 'No se pudo eliminar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingGoalId(null);
+    }
+  };
+
+  const openGoalContributionModal = (goal: SavingsGoal) => {
+    setContributingGoalId(goal.id);
+    setGoalContributionForm({
+      amount: String(goal.weekly_contribution_target || goal.monthly_contribution_target || ''),
+      contributionDate: today,
+      accountId: goal.account_id || '',
+      paymentMethod: '',
+      notes: '',
+    });
+  };
+
+  const handleGoalContribution = async () => {
+    if (!contributingGoalId) return;
+    setWorkingGoalId(contributingGoalId);
+    try {
+      await contributeToSavingsGoal(contributingGoalId, {
+        amount: Number(goalContributionForm.amount || 0),
+        contribution_date: goalContributionForm.contributionDate,
+        account_id: goalContributionForm.accountId || null,
+        payment_method: goalContributionForm.paymentMethod,
+        notes: goalContributionForm.notes,
+      });
+      showToast({ type: 'success', title: 'Aporte registrado' });
+      setContributingGoalId(null);
+      setGoalContributionForm(initialGoalContributionForm);
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo aportar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingGoalId(null);
+    }
+  };
+
+  const handleGoalStatus = async (goal: SavingsGoal, status: string) => {
+    setWorkingGoalId(goal.id);
+    try {
+      await updateSavingsGoal(goal.id, { ...goal, status });
+      showToast({ type: 'success', title: 'Meta actualizada' });
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo actualizar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingGoalId(null);
     }
@@ -408,13 +660,20 @@ export function PersonalBudgetModule() {
       setEditingDebtId(debt.id);
       setDebtForm({
         name: debt.name,
-        type: debt.type || 'Personal',
+        type: debt.debt_type || debt.type || 'Tarjeta de credito',
         category: debt.category || 'Deudas personales',
         originalAmount: String(debt.original_amount || ''),
-        pending: String(debt.pending || ''),
-        minimum: String(debt.minimum || ''),
+        pending: String(debt.current_balance ?? debt.pending ?? ''),
+        interestRate: String(debt.interest_rate ?? debt.interest ?? ''),
+        interestRateType: debt.interest_rate_type || 'Anual',
+        minimum: String(debt.minimum_payment ?? debt.minimum ?? ''),
+        recommendedPayment: String(debt.recommended_payment || ''),
+        extraPayment: String(debt.extra_payment || ''),
+        paymentFrequency: debt.payment_frequency || 'Mensual',
         dueDate: debt.due_date || today,
-        interest: String(debt.interest || ''),
+        cutDate: debt.cut_date || '',
+        creditLimit: String(debt.credit_limit || ''),
+        strategy: debt.strategy || 'Metodo avalancha',
         priority: debt.priority || 'Media',
         status: debt.status || 'Al dia',
         risk: debt.risk || 'Medio',
@@ -441,20 +700,41 @@ export function PersonalBudgetModule() {
     try {
       const payload = {
         name: debtForm.name,
-        type: debtForm.type || 'Personal',
+        type: debtForm.type || 'Tarjeta de credito',
+        debt_type: debtForm.type || 'Tarjeta de credito',
         category: debtForm.category || 'Deudas personales',
         owner_type: 'personal' as const,
         business_unit_id: 'personal',
         business_id: null,
         original_amount: Number(debtForm.originalAmount || debtForm.pending || 0),
         pending: Number(debtForm.pending || debtForm.originalAmount || 0),
+        current_balance: Number(debtForm.pending || debtForm.originalAmount || 0),
         paid: Math.max(0, Number(debtForm.originalAmount || 0) - Number(debtForm.pending || debtForm.originalAmount || 0)),
         minimum: Number(debtForm.minimum || 0),
+        minimum_payment: Number(debtForm.minimum || 0),
+        recommended_payment: Number(debtForm.recommendedPayment || 0) || (Number(debtForm.minimum || 0) + Number(debtForm.extraPayment || 0)),
+        extra_payment: Number(debtForm.extraPayment || 0),
+        payment_frequency: debtForm.paymentFrequency,
         due_date: debtForm.dueDate,
-        interest: Number(debtForm.interest || 0),
+        interest: Number(debtForm.interestRate || 0),
+        interest_rate: Number(debtForm.interestRate || 0),
+        interest_rate_type: debtForm.interestRateType,
+        cut_date: debtForm.cutDate || undefined,
+        credit_limit: Number(debtForm.creditLimit || 0),
+        credit_utilization: debtForm.type === 'Tarjeta de credito' && Number(debtForm.creditLimit || 0) > 0
+          ? (Number(debtForm.pending || 0) / Number(debtForm.creditLimit || 1)) * 100
+          : 0,
+        strategy: debtForm.strategy,
         priority: debtForm.priority,
         status: debtForm.status,
-        risk: debtForm.risk,
+        risk: getDebtRisk({
+          pending: Number(debtForm.pending || debtForm.originalAmount || 0),
+          minimum: Number(debtForm.minimum || 0),
+          interest: Number(debtForm.interestRate || 0),
+          interest_rate_type: debtForm.interestRateType,
+          priority: debtForm.priority,
+          status: debtForm.status,
+        }),
         recommendation: debtForm.notes,
         notes: debtForm.notes,
       };
@@ -525,14 +805,25 @@ export function PersonalBudgetModule() {
     }
   };
 
-  const openCardModal = (account?: Account) => {
-    if (account) {
-      setEditingCardId(account.id);
+  const openCardModal = (card?: StoredCreditCard) => {
+    if (card) {
+      setEditingCardId(card.id);
       setCardForm({
-        name: account.name,
-        bankName: account.bank_name || '',
-        balance: String(account.current_balance || ''),
-        status: account.status || 'active',
+        name: card.name,
+        bankName: card.bank || '',
+        cardType: card.card_type || 'Credito',
+        creditLimit: String(card.credit_limit || ''),
+        balance: String(card.current_balance || ''),
+        cutDate: card.cut_date || '',
+        paymentDueDate: card.payment_due_date || '',
+        minimumPayment: String(card.minimum_payment || ''),
+        recommendedPayment: String(card.recommended_payment || ''),
+        idealPayment: String(card.ideal_payment || ''),
+        annualInterestRate: String(card.annual_interest_rate || ''),
+        accountId: card.account_id || '',
+        createLinkedDebt: Boolean(card.debt_id),
+        status: card.status || 'active',
+        notes: card.notes || '',
       });
     } else {
       setEditingCardId(null);
@@ -553,20 +844,52 @@ export function PersonalBudgetModule() {
     setSavingCard(true);
     setCardError('');
     try {
+      const balance = Number(cardForm.balance || 0);
+      const limit = Number(cardForm.creditLimit || 0);
+      if (!cardForm.name.trim()) throw new Error('El nombre de la tarjeta es obligatorio.');
+      if (isCreditCardForm) {
+        if (limit <= 0) throw new Error('El limite de credito es obligatorio.');
+        if (!cardForm.paymentDueDate) throw new Error('La fecha de pago es obligatoria.');
+        if (balance > limit) throw new Error('El saldo usado no puede ser mayor al limite de credito.');
+      }
+      const metrics = isCreditCardForm
+        ? cardFormMetrics
+        : {
+          available_credit: Number(cardForm.balance || 0),
+          credit_utilization: 0,
+          status: cardForm.status,
+          estimated_monthly_interest: 0,
+          recommended_payment: 0,
+          ideal_payment: 0,
+        };
       const payload = {
         name: cardForm.name,
-        type: 'Tarjeta personal',
-        bank_name: cardForm.bankName,
-        current_balance: Number(cardForm.balance || 0),
-        is_personal: true,
-        business_id: undefined,
-        status: cardForm.status,
+        bank: cardForm.bankName,
+        card_type: cardForm.cardType,
+        credit_limit: isCreditCardForm ? limit : 0,
+        current_balance: balance,
+        available_credit: metrics.available_credit,
+        credit_utilization: metrics.credit_utilization,
+        cut_date: isCreditCardForm ? cardForm.cutDate || null : null,
+        payment_due_date: isCreditCardForm ? cardForm.paymentDueDate || null : null,
+        minimum_payment: isCreditCardForm ? Number(cardForm.minimumPayment || 0) : 0,
+        recommended_payment: isCreditCardForm ? Number(cardForm.recommendedPayment || metrics.recommended_payment || 0) : 0,
+        ideal_payment: isCreditCardForm ? Number(cardForm.idealPayment || metrics.ideal_payment || 0) : 0,
+        annual_interest_rate: isCreditCardForm ? Number(cardForm.annualInterestRate || 0) : 0,
+        estimated_monthly_interest: metrics.estimated_monthly_interest,
+        status: isCreditCardForm ? metrics.status : cardForm.status,
+        account_id: cardForm.accountId || null,
+        notes: cardForm.notes,
+        owner_type: 'personal' as const,
+        business_unit_id: 'personal',
+        create_linked_debt: isCreditCardForm && cardForm.createLinkedDebt,
+        legacy_account_id: personalCards.find((card) => card.id === editingCardId)?.legacy_account_id,
       };
       if (editingCardId) {
-        await updateAccount(editingCardId, payload);
+        await updateCreditCard(editingCardId, payload);
         showToast({ type: 'success', title: 'Tarjeta personal actualizada' });
       } else {
-        await createAccount(payload);
+        await createCreditCard(payload);
         showToast({ type: 'success', title: 'Tarjeta personal creada' });
       }
       closeCardModal();
@@ -579,13 +902,45 @@ export function PersonalBudgetModule() {
     }
   };
 
-  const handleDeleteCard = async (accountId: string) => {
-    setWorkingCardId(accountId);
+  const handleDeleteCard = async (cardId: string) => {
+    setWorkingCardId(cardId);
     try {
-      await deleteAccount(accountId);
+      await deleteCreditCard(cardId);
       showToast({ type: 'success', title: 'Tarjeta eliminada' });
     } catch (error) {
       showToast({ type: 'error', title: 'No se pudo eliminar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
+    } finally {
+      setWorkingCardId(null);
+    }
+  };
+
+  const openCardPaymentModal = (card: StoredCreditCard) => {
+    setPayingCardId(card.id);
+    setCardPaymentForm({
+      amount: String(card.recommended_payment || card.minimum_payment || ''),
+      paymentDate: today,
+      paymentMethod: '',
+      accountId: card.account_id || '',
+      notes: '',
+    });
+  };
+
+  const handleCardPayment = async () => {
+    if (!payingCardId) return;
+    setWorkingCardId(payingCardId);
+    try {
+      await registerCreditCardPayment(payingCardId, {
+        amount: Number(cardPaymentForm.amount || 0),
+        payment_date: cardPaymentForm.paymentDate,
+        payment_method: cardPaymentForm.paymentMethod,
+        account_id: cardPaymentForm.accountId || null,
+        notes: cardPaymentForm.notes,
+      });
+      showToast({ type: 'success', title: 'Abono a tarjeta registrado' });
+      setPayingCardId(null);
+      setCardPaymentForm(initialCardPaymentForm);
+    } catch (error) {
+      showToast({ type: 'error', title: 'No se pudo abonar', description: error instanceof Error ? error.message : 'Intentalo nuevamente.' });
     } finally {
       setWorkingCardId(null);
     }
@@ -598,7 +953,12 @@ export function PersonalBudgetModule() {
       const base = monthlyTarget || defaultMonthlyTarget;
       await upsertMonthlyTarget({
         ...base,
-        personal_budget_target: Number((budgetDraft || String(base.personal_budget_target || 0)).replace(',', '.')),
+        personal_budget_target: parseBudgetNumber(budgetForm.freeSpendingLimit, Number(base.free_spending_limit ?? base.personal_budget_target ?? 0)),
+        free_spending_limit: parseBudgetNumber(budgetForm.freeSpendingLimit, Number(base.free_spending_limit ?? base.personal_budget_target ?? 0)),
+        savings_goal: parseBudgetNumber(budgetForm.savingsGoal, Number(base.savings_goal || 0)),
+        extra_debt_payment: parseBudgetNumber(budgetForm.extraDebtPayment, Number(base.extra_debt_payment ?? base.debt_payment_target ?? 0)),
+        emergency_fund: parseBudgetNumber(budgetForm.emergencyFund, Number(base.emergency_fund ?? base.reserve_target ?? 0)),
+        budget_mode: budgetForm.budgetMode || base.budget_mode || 'balanceado',
       });
       showToast({ type: 'success', title: 'Presupuesto personal actualizado' });
     } catch (error) {
@@ -615,8 +975,16 @@ export function PersonalBudgetModule() {
     setBudgetError('');
     try {
       const base = monthlyTarget || defaultMonthlyTarget;
-      await upsertMonthlyTarget({ ...base, personal_budget_target: 0 });
-      setBudgetDraft('');
+      await upsertMonthlyTarget({
+        ...base,
+        personal_budget_target: 0,
+        free_spending_limit: 0,
+        savings_goal: 0,
+        extra_debt_payment: 0,
+        emergency_fund: 0,
+        budget_mode: 'balanceado',
+      });
+      setBudgetForm(initialBudgetForm);
       showToast({ type: 'success', title: 'Presupuesto personal eliminado' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo eliminar el presupuesto.';
@@ -709,7 +1077,7 @@ export function PersonalBudgetModule() {
 
         <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <MiniSummary label="Total mensual" value={money(personalRecurringTotal)} />
-          <MiniSummary label="Proximo pago" value={upcomingPersonalFixed ? money(Number(upcomingPersonalFixed.amount || 0)) : 'Sin pagos'} detail={upcomingPersonalFixed ? `${upcomingPersonalFixed.name} · ${upcomingPersonalFixed.next_due_date || upcomingPersonalFixed.due_date || upcomingPersonalFixed.next_run_date}` : undefined} />
+          <MiniSummary label="Proximo pago" value={upcomingPersonalFixed ? money(Number(upcomingPersonalFixed.amount || 0)) : 'Sin pagos'} detail={upcomingPersonalFixed ? `${upcomingPersonalFixed.name} - ${upcomingPersonalFixed.next_due_date || upcomingPersonalFixed.due_date || upcomingPersonalFixed.next_run_date}` : undefined} />
           <MiniSummary label="Esta semana" value={String(weeklyFixedPayments)} detail="pagos programados" />
           <MiniSummary label="Categoria mas alta" value={highestFixedCategory?.name || 'Sin datos'} detail={highestFixedCategory ? money(highestFixedCategory.total) : undefined} />
           <MiniSummary label="Activos" value={String(personalRecurring.length)} />
@@ -789,9 +1157,9 @@ export function PersonalBudgetModule() {
                           </span>
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {money(Number(expense.amount || 0))} · {expense.frequency} · {expense.category || 'Otros'} · Pago: {expense.next_due_date || expense.due_date || expense.next_run_date}
+                          {money(Number(expense.amount || 0))} - {expense.frequency} - {expense.category || 'Otros'} - Pago: {expense.next_due_date || expense.due_date || expense.next_run_date}
                         </p>
-                        <p className="mt-1 text-xs text-muted-foreground">Metodo: {expense.payment_method || 'Sin metodo'}{expense.last_paid_date ? ` · Ultimo pago: ${expense.last_paid_date}` : ''}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Metodo: {expense.payment_method || 'Sin metodo'}{expense.last_paid_date ? ` - Ultimo pago: ${expense.last_paid_date}` : ''}</p>
                       </div>
                       <div className="flex flex-wrap gap-2 lg:justify-end">
                         <Button variant="outline" size="sm" disabled={workingFixedId === expense.id} onClick={() => openFixedModal(expense)}>
@@ -849,42 +1217,132 @@ export function PersonalBudgetModule() {
       )}
 
       {view === 'debts' && (
-        <section className="space-y-4">
+        <section className="space-y-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-xl font-display font-semibold">Deudas personales</h3>
-              <p className="text-sm text-muted-foreground">Crea, edita, abona, marca como pagada o elimina deudas personales.</p>
+              <p className="text-sm text-muted-foreground">Planifica pagos, compara escenarios y controla tus deudas desde Finanzas Personales.</p>
             </div>
             <Button onClick={() => openDebtModal()}><Plus className="mr-2 h-4 w-4" /> Nueva deuda personal</Button>
           </div>
-          <div className="grid gap-3 md:grid-cols-3">
-            <MiniSummary label="Saldo pendiente" value={money(personalDebts.reduce((sum, debt) => sum + Number(debt.pending || 0), 0))} />
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <MiniSummary label="Saldo total pendiente" value={money(personalDebtBalance)} />
             <MiniSummary label="Pago minimo mensual" value={money(personalDebtMinimum)} />
-            <MiniSummary label="Deudas abiertas" value={String(personalDebts.filter((debt) => debt.status !== 'Pagada').length)} />
+            <MiniSummary label="Pago recomendado" value={money(personalDebtRecommended)} />
+            <MiniSummary label="Tasa promedio" value={`${averageDebtInterest.toFixed(1)}%`} />
+            <MiniSummary label="Proxima fecha" value={urgentDebt?.due_date || 'Sin fecha'} detail={urgentDebt?.name} />
+            <MiniSummary label="Deudas abiertas" value={String(openPersonalDebts.length)} detail={`${personalDebts.length - openPersonalDebts.length} cerradas`} />
           </div>
+
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="grid gap-4 p-5 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-primary" />
+                  <h4 className="font-semibold">Plan general para salir de deudas</h4>
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">{debtStrategyMessage}</p>
+                {generalDebtPayoff?.monthsToPayoff && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Con los pagos actuales, la deuda mas larga termina en {generalDebtPayoff.monthsToPayoff} meses.
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(['Avalancha', 'Bola de nieve', 'Personalizado'] as const).map((strategy) => (
+                  <Button key={strategy} variant={debtStrategy === strategy ? 'default' : 'outline'} size="sm" onClick={() => setDebtStrategy(strategy)}>
+                    {strategy}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
           <Card>
             <CardContent className="p-0">
               {personalDebts.length > 0 ? (
                 <div className="divide-y divide-border/50">
-                  {personalDebts.map((debt) => (
-                    <div key={debt.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold">{debt.name}</p>
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{debt.status || 'Al dia'}</span>
+                  {personalDebts.map((debt) => {
+                    const balance = Number(debt.current_balance ?? debt.pending ?? 0);
+                    const minimum = getDebtMinimumPayment(debt);
+                    const recommended = Number(debt.recommended_payment || minimum || 0);
+                    const plan = calculateDebtPayoffPlan(debt, recommended);
+                    const scenarios = compareDebtPaymentScenarios(debt, recommended);
+                    const utilization = getCreditUtilization(debt);
+                    const utilizationStatus = getUtilizationStatus(utilization);
+                    const isExpanded = expandedDebtId === debt.id;
+                    return (
+                      <div key={debt.id} className="p-4">
+                        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold">{debt.name}</p>
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{debt.status || 'Al dia'}</span>
+                              <span className="rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700">Riesgo {getDebtRisk(debt)}</span>
+                              {debtPlanTarget?.id === debt.id && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Prioridad del plan</span>}
+                            </div>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              {debt.debt_type || debt.type} - Saldo: {money(balance)} - Minimo: {money(minimum)} - Recomendado: {money(recommended)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Interes: {getDebtInterestRate(debt)}% {debt.interest_rate_type || 'Anual'} - Vence: {debt.due_date || 'Sin fecha'}
+                              {debt.credit_limit ? ` - Uso tarjeta: ${utilization.toFixed(1)}% (${utilizationStatus})` : ''}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2 lg:justify-end">
+                            <Button variant="outline" size="sm" onClick={() => setExpandedDebtId(isExpanded ? null : debt.id)}>
+                              <ChevronDown className={`mr-1.5 h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} /> Plan
+                            </Button>
+                            <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => openDebtModal(debt)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
+                            <Button variant="outline" size="sm" disabled={workingDebtId === debt.id || balance <= 0} onClick={() => { setDebtPaymentAmount(String(recommended || minimum || '')); setPayingDebtId(debt.id); }}>Abonar</Button>
+                            <Button variant="outline" size="sm" disabled={workingDebtId === debt.id || balance <= 0} onClick={() => handleMarkDebtPaid(debt)}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Pagada</Button>
+                            <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => handleDeleteDebt(debt.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
+                          </div>
                         </div>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          Pendiente: {money(Number(debt.pending || 0))} · Minimo: {money(Number(debt.minimum || 0))} · Vence: {debt.due_date || 'Sin fecha'}
-                        </p>
+
+                        {isExpanded && (
+                          <div className="mt-4 grid gap-4 rounded-xl border border-border bg-muted/20 p-4 xl:grid-cols-[0.9fr_1.1fr]">
+                            <div className="space-y-3">
+                              <div className="rounded-lg border bg-background p-3">
+                                <p className="text-xs font-medium text-muted-foreground">Recomendacion de Noa</p>
+                                <p className="mt-1 text-sm">{buildDebtRecommendation(debt)}</p>
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <MiniSummary label="Meses estimados" value={plan.monthsToPayoff ? String(plan.monthsToPayoff) : 'Sin calcular'} />
+                                <MiniSummary label="Interes total estimado" value={money(plan.totalInterest)} />
+                                <MiniSummary label="Pago a capital mes 1" value={money(Math.max(0, plan.principalPayment))} />
+                                <MiniSummary label="Fecha estimada final" value={plan.payoffDate || 'Sin calcular'} />
+                              </div>
+                              {plan.warningMessage && <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-700">{plan.warningMessage}</div>}
+                            </div>
+                            <div className="space-y-3">
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {scenarios.map((scenario) => (
+                                  <div key={scenario.label} className="rounded-lg border bg-background p-3">
+                                    <p className="text-xs font-medium text-muted-foreground">{scenario.label}</p>
+                                    <p className="mt-1 font-semibold">{money(scenario.payment)}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {scenario.monthsToPayoff ? `${scenario.monthsToPayoff} meses` : 'Sin fecha'} - Ahorro: {money(scenario.interestSavings)}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="overflow-hidden rounded-lg border bg-background">
+                                <div className="grid grid-cols-4 gap-2 border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+                                  <span>Mes</span><span>Pago</span><span>Interes</span><span>Saldo</span>
+                                </div>
+                                {plan.amortizationSchedule.slice(0, 6).map((row) => (
+                                  <div key={row.month} className="grid grid-cols-4 gap-2 px-3 py-2 text-xs">
+                                    <span>{row.month}</span><span>{money(row.payment)}</span><span>{money(row.interest)}</span><span>{money(row.endingBalance)}</span>
+                                  </div>
+                                ))}
+                                {plan.amortizationSchedule.length === 0 && <div className="px-3 py-4 text-sm text-muted-foreground">Agrega tasa y pago para generar la tabla.</div>}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex flex-wrap gap-2 lg:justify-end">
-                        <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => openDebtModal(debt)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
-                        <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => { setDebtPaymentAmount(''); setPayingDebtId(debt.id); }}>Abonar</Button>
-                        <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => handleMarkDebtPaid(debt)}><CheckCircle2 className="mr-1.5 h-3.5 w-3.5" /> Pagada</Button>
-                        <Button variant="outline" size="sm" disabled={workingDebtId === debt.id} onClick={() => handleDeleteDebt(debt.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-8 text-center">
@@ -898,33 +1356,115 @@ export function PersonalBudgetModule() {
       )}
 
       {view === 'cards' && (
-        <section className="space-y-4">
+        <section className="space-y-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-xl font-display font-semibold">Tarjetas personales</h3>
-              <p className="text-sm text-muted-foreground">Tarjetas asociadas a Finanzas Personales, no a negocios.</p>
+              <p className="text-sm text-muted-foreground">Controla tarjetas de credito, debito y prepago dentro de Finanzas Personales.</p>
             </div>
             <Button onClick={() => openCardModal()}><Plus className="mr-2 h-4 w-4" /> Nueva tarjeta personal</Button>
           </div>
+
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
+            <MiniSummary label="Usado en credito" value={money(cardKpis.used)} />
+            <MiniSummary label="Limite total" value={money(cardKpis.limit)} />
+            <MiniSummary label="Disponible" value={money(cardKpis.available)} />
+            <MiniSummary label="Utilizacion prom." value={`${cardKpis.averageUtilization.toFixed(1)}%`} />
+            <MiniSummary label="Proximo pago" value={cardKpis.nextPayment?.payment_due_date || 'Sin fecha'} detail={cardKpis.nextPayment?.name} />
+            <MiniSummary label="Pago minimo total" value={money(cardKpis.minimum)} />
+            <MiniSummary label="Pago recomendado" value={money(cardKpis.recommended)} detail={`${creditCardPayments.length} pagos guardados`} />
+            <MiniSummary label="En peligro" value={String(cardKpis.danger)} />
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Proximos pagos de tarjetas</CardTitle>
+              <CardDescription>Pagos agrupados por urgencia segun fecha de pago.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {cardPaymentGroups.length > 0 ? cardPaymentGroups.map((group) => (
+                <div key={group.id} className="space-y-2">
+                  <p className="text-sm font-semibold text-muted-foreground">{group.label}</p>
+                  {group.items.map((card) => (
+                    <div key={`${group.id}-${card.id}`} className="grid gap-3 rounded-xl border border-border p-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                      <div>
+                        <p className="font-semibold">{card.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {card.bank || 'Sin banco'} - Minimo: {money(Number(card.minimum_payment || 0))} - Recomendado: {money(Number(card.recommended_payment || 0))} - Pago: {card.payment_due_date}
+                        </p>
+                      </div>
+                      <Button variant="outline" size="sm" onClick={() => openCardPaymentModal(card)} disabled={workingCardId === card.id}>Abonar / Pagar</Button>
+                    </div>
+                  ))}
+                </div>
+              )) : (
+                <EmptyState text="No hay pagos de tarjetas programados." />
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardContent className="p-0">
               {personalCards.length > 0 ? (
                 <div className="divide-y divide-border/50">
-                  {personalCards.map((card) => (
-                    <div key={card.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                      <div className="flex items-center gap-3">
-                        <div className="rounded-xl bg-primary/10 p-2 text-primary"><CreditCard className="h-5 w-5" /></div>
-                        <div>
-                          <p className="font-semibold">{card.name}</p>
-                          <p className="text-sm text-muted-foreground">{card.bank_name || 'Sin banco'} · Saldo: {money(Number(card.current_balance || 0))}</p>
+                  {personalCards.map((card) => {
+                    const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+                    const isCredit = card.card_type === 'Credito';
+                    const status = isCredit ? metrics.status : card.status || 'Activa';
+                    const statusClasses = isCredit ? getCardStatusClasses(status) : 'border-blue-300 bg-blue-50 text-blue-700';
+                    const isExpanded = expandedCardId === card.id;
+                    return (
+                      <div key={card.id} className="p-4">
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                          <div className="space-y-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="rounded-xl bg-primary/10 p-2 text-primary"><CreditCard className="h-5 w-5" /></div>
+                              <div>
+                                <p className="font-semibold">{card.name}</p>
+                                <p className="text-sm text-muted-foreground">{card.bank || 'Sin banco'} - {card.card_type}</p>
+                              </div>
+                              <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${statusClasses}`}>{status}</span>
+                            </div>
+                            {isCredit ? (
+                              <div className="space-y-2">
+                                <div className="grid gap-2 text-sm sm:grid-cols-4">
+                                  <span>Limite: <b>{money(Number(card.credit_limit || 0))}</b></span>
+                                  <span>Usado: <b>{money(Number(card.current_balance || 0))}</b></span>
+                                  <span>Disponible: <b>{money(metrics.available_credit)}</b></span>
+                                  <span>Uso: <b>{metrics.credit_utilization.toFixed(1)}%</b></span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                                  <div className={`h-full ${status === 'Peligro' ? 'bg-red-500' : status === 'Alto uso' ? 'bg-orange-500' : status === 'Cuidado' ? 'bg-yellow-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, metrics.credit_utilization)}%` }} />
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  Corte: {card.cut_date || 'Sin fecha'} - Pago: {card.payment_due_date || 'Sin fecha'} - Minimo: {money(Number(card.minimum_payment || 0))} - Recomendado: {money(Number(card.recommended_payment || metrics.recommended_payment || 0))}
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">Saldo actual: {money(Number(card.current_balance || 0))} - Cuenta asociada: {card.account_id || 'Sin cuenta'}</p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2 lg:justify-end">
+                            {isCredit && <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardPaymentModal(card)}>Abonar</Button>}
+                            {isCredit && <Button variant="outline" size="sm" onClick={() => setExpandedCardId(isExpanded ? null : card.id)}>Ver plan</Button>}
+                            {isCredit && <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardPaymentModal(card)}>Marcar pago</Button>}
+                            <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardModal(card)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
+                            <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => handleDeleteCard(card.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
+                          </div>
                         </div>
+                        {isExpanded && isCredit && (
+                          <div className="mt-4 grid gap-3 rounded-xl border border-border bg-muted/20 p-4 md:grid-cols-4">
+                            <MiniSummary label="Bajar a 50%" value={money(Math.max(0, Number(card.current_balance || 0) - Number(card.credit_limit || 0) * 0.5))} />
+                            <MiniSummary label="Bajar a 30%" value={money(metrics.ideal_payment)} />
+                            <MiniSummary label="Interes mensual est." value={money(metrics.estimated_monthly_interest)} />
+                            <MiniSummary label="Deuda vinculada" value={card.debt_id ? 'Si' : 'No'} />
+                            {metrics.credit_utilization >= 80 && <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 md:col-span-4">Esta tarjeta esta en zona de peligro. Prioriza bajar el saldo.</div>}
+                            {!card.annual_interest_rate && <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-700 md:col-span-4">Sin tasa de interes no se puede calcular el costo real de esta tarjeta.</div>}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex flex-wrap gap-2 lg:justify-end">
-                        <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardModal(card)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
-                        <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => handleDeleteCard(card.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-8 text-center">
@@ -938,69 +1478,197 @@ export function PersonalBudgetModule() {
       )}
 
       {view === 'budget' && (
-        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+        <section className="space-y-5">
+          <div>
+            <h3 className="text-xl font-display font-semibold">Presupuesto / Limite personal</h3>
+            <p className="text-sm text-muted-foreground">Define cuanto puedes gastar personalmente sin afectar tus gastos fijos, deudas ni ahorro.</p>
+          </div>
+
           <Card>
             <CardHeader>
-              <CardTitle>Presupuesto personal</CardTitle>
-              <CardDescription>Guarda tu objetivo mensual personal para que Noa calcule limites y metas con datos reales.</CardDescription>
+              <CardTitle>Configuracion del presupuesto</CardTitle>
+              <CardDescription>Este monto es solo para gasto libre variable. No registra gastos fijos, deudas ni tarjetas.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <DistributionRow label="Presupuesto guardado" value={Number(monthlyTarget?.personal_budget_target || 0)} />
-              <Field label="Monto mensual objetivo">
-                <input className="form-field" type="number" min="0" step="0.01" value={budgetDraft || String(monthlyTarget?.personal_budget_target || '')} onChange={(event) => setBudgetDraft(event.target.value)} placeholder="0.00" />
-              </Field>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <Field label="Gasto libre mensual permitido">
+                  <input className="form-field" type="number" min="0" step="0.01" value={budgetForm.freeSpendingLimit || String(savedFreeSpendingLimit || '')} onChange={(event) => setBudgetForm({ ...budgetForm, freeSpendingLimit: event.target.value })} placeholder="0.00" />
+                </Field>
+                <Field label="Ahorro mensual objetivo">
+                  <input className="form-field" type="number" min="0" step="0.01" value={budgetForm.savingsGoal || String(savedSavingsGoal || '')} onChange={(event) => setBudgetForm({ ...budgetForm, savingsGoal: event.target.value })} placeholder="0.00" />
+                </Field>
+                <Field label="Pago extra mensual a deudas">
+                  <input className="form-field" type="number" min="0" step="0.01" value={budgetForm.extraDebtPayment || String(savedExtraDebtPayment || '')} onChange={(event) => setBudgetForm({ ...budgetForm, extraDebtPayment: event.target.value })} placeholder="Opcional" />
+                </Field>
+                <Field label="Fondo de emergencia mensual">
+                  <input className="form-field" type="number" min="0" step="0.01" value={budgetForm.emergencyFund || String(savedEmergencyFund || '')} onChange={(event) => setBudgetForm({ ...budgetForm, emergencyFund: event.target.value })} placeholder="Opcional" />
+                </Field>
+                <Field label="Modo de calculo">
+                  <select className="form-field" value={budgetForm.budgetMode || savedBudgetMode} onChange={(event) => setBudgetForm({ ...budgetForm, budgetMode: event.target.value })}>
+                    <option value="conservador">Conservador</option>
+                    <option value="balanceado">Balanceado</option>
+                    <option value="agresivo">Agresivo</option>
+                  </select>
+                </Field>
+              </div>
               {budgetError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{budgetError}</div>}
               <div className="flex flex-wrap gap-2">
-                <Button onClick={handleSaveBudget} disabled={savingBudget}>{savingBudget ? 'Guardando...' : 'Guardar presupuesto personal'}</Button>
-                <Button variant="outline" className="text-destructive hover:text-destructive" onClick={handleClearBudget} disabled={savingBudget}>Eliminar presupuesto</Button>
+                <Button onClick={handleSaveBudget} disabled={savingBudget}>{savingBudget ? 'Guardando...' : 'Guardar limite personal'}</Button>
+                <Button variant="outline" className="text-destructive hover:text-destructive" onClick={handleClearBudget} disabled={savingBudget}>Limpiar presupuesto</Button>
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Lectura del presupuesto</CardTitle>
-              <CardDescription>Calculado desde movimientos, gastos fijos, deudas y ahorro personal.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <DistributionRow label="Gastos del mes" value={monthlyExpenses} tone="destructive" />
-              <DistributionRow label="Gastos fijos personales" value={personalRecurringTotal} />
-              <DistributionRow label="Deudas personales" value={personalDebtMinimum} tone="warning" />
-              <DistributionRow label="Limite seguro semanal" value={safeWeeklyLimit} tone="success" />
-            </CardContent>
-          </Card>
+
+          <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
+            <MiniSummary label="Gasto libre mensual" value={budgetConfigured ? money(savedFreeSpendingLimit) : 'Sin configurar'} />
+            <MiniSummary label="Gastado este mes" value={money(monthlyVariableExpenses)} />
+            <MiniSummary label="Disponible este mes" value={budgetConfigured ? money(Math.max(0, budgetAvailableMonth)) : 'Sin configurar'} />
+            <MiniSummary label="Limite semanal" value={budgetConfigured ? money(budgetWeeklyLimit) : 'Sin configurar'} />
+            <MiniSummary label="Limite diario" value={budgetConfigured ? money(budgetDailyLimit) : 'Sin configurar'} />
+            <MiniSummary label="Gastos fijos" value={money(personalRecurringTotal)} />
+            <MiniSummary label="Deudas personales" value={money(personalDebtMinimum)} />
+            <MiniSummary label="Ahorro objetivo" value={money(savedSavingsGoal)} />
+          </div>
+
+          <div className="grid gap-5 lg:grid-cols-[1fr_0.9fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Lectura del presupuesto</CardTitle>
+                <CardDescription>Lee datos reales desde movimientos, gastos fijos, deudas, tarjetas y ahorro.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!budgetConfigured ? (
+                  <EmptyState text="Todavia no has configurado tu gasto libre mensual. Define cuanto puedes gastar personalmente para calcular tu limite semanal." />
+                ) : (
+                  <>
+                    <DistributionRow label="Gastos variables del mes" value={monthlyVariableExpenses} tone="destructive" />
+                    <DistributionRow label="Gastos fijos personales" value={personalRecurringTotal} />
+                    <DistributionRow label="Deudas personales" value={personalDebtMinimum} tone="warning" />
+                    <DistributionRow label="Tarjetas personales" value={personalCardsMinimum} tone="warning" />
+                    <DistributionRow label="Ahorro objetivo" value={savedSavingsGoal} tone="primary" />
+                    <DistributionRow label="Pago extra a deudas" value={savedExtraDebtPayment} tone="warning" />
+                    <DistributionRow label="Fondo de emergencia" value={savedEmergencyFund} tone="primary" />
+                    <DistributionRow label="Limite seguro semanal" value={budgetWeeklyLimit} tone="success" />
+                    <DistributionRow label="Limite diario" value={budgetDailyLimit} tone="success" />
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className={budgetAvailableMonth < 0 ? 'border-destructive/30 bg-destructive/5' : budgetUsedPercent >= 80 ? 'border-orange-300 bg-orange-50' : 'border-success/20 bg-success/5'}>
+              <CardHeader>
+                <CardTitle>Decision rapida de Noa</CardTitle>
+                <CardDescription>Recomendacion basada en tu gasto libre real.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm leading-relaxed">{budgetNoaDecision}</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-medium text-muted-foreground">
+                    <span>Usado</span>
+                    <span>{budgetConfigured ? `${Math.min(999, budgetUsedPercent).toFixed(1)}%` : 'Sin presupuesto'}</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-background border border-border">
+                    <div className={`h-full ${budgetAvailableMonth < 0 ? 'bg-destructive' : budgetUsedPercent >= 80 ? 'bg-orange-500' : 'bg-success'}`} style={{ width: `${budgetConfigured ? Math.min(100, budgetUsedPercent) : 0}%` }} />
+                  </div>
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <span>Disponible mes: <b>{budgetConfigured ? money(budgetAvailableMonth) : 'Sin configurar'}</b></span>
+                    <span>Disponible semana: <b>{budgetConfigured ? money(budgetWeeklyAvailable) : 'Sin configurar'}</b></span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </section>
       )}
 
       {view === 'savings' && (
-        <section className="space-y-4">
+        <section className="space-y-5">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-              <h3 className="text-xl font-display font-semibold">Ahorro y metas</h3>
-              <p className="text-sm text-muted-foreground">Metas personales guardadas como dinero protegido.</p>
+              <h3 className="text-xl font-display font-semibold">Ahorro / Dinero protegido personal</h3>
+              <p className="text-sm text-muted-foreground">Separa dinero personal para metas, emergencias y reservas que no debes tocar.</p>
             </div>
             <Button onClick={() => openGoalModal()}><PiggyBank className="mr-2 h-4 w-4" /> Crear meta de ahorro</Button>
           </div>
+
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <MiniSummary label="Ahorro protegido actual" value={money(personalSavings)} />
+            <MiniSummary label="Meta total de ahorro" value={money(savingsTotalTarget)} />
+            <MiniSummary label="Falta por ahorrar" value={money(savingsMissingTotal)} />
+            <MiniSummary label="Aporte mensual sugerido" value={savedFreeSpendingLimit > 0 ? money(recommendedSaving) : 'Sin presupuesto'} detail={savedFreeSpendingLimit > 0 ? undefined : 'Configura presupuesto'} />
+            <MiniSummary label="Meta mas urgente" value={urgentSavingsGoal?.name || 'Sin metas'} detail={urgentSavingsGoal?.target_date || urgentSavingsGoal?.priority} />
+            <MiniSummary label="Avance general" value={`${savingsProgress.toFixed(1)}%`} />
+          </div>
+
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="p-5">
+              <p className="font-semibold">Lectura de ahorro</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {savedFreeSpendingLimit > 0
+                  ? `Tu ahorro sugerido se calcula desde tu presupuesto personal. Este mes la referencia sugerida es ${money(recommendedSaving)}.`
+                  : 'Configura tu presupuesto personal para calcular un ahorro sugerido. No hay datos suficientes para sugerir ahorro.'}
+              </p>
+              <div className="mt-4 h-3 overflow-hidden rounded-full bg-background border border-border">
+                <div className="h-full bg-primary" style={{ width: `${Math.min(100, savingsProgress)}%` }} />
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
-            <CardContent className="p-5 space-y-5">
-              <DistributionRow label="Ahorro protegido actual" value={personalSavings} tone="primary" />
-              <DistributionRow label="Ahorro sugerido" value={recommendedSaving} tone="primary" />
+            <CardContent className="p-0">
               {personalGoals.length > 0 ? (
-                <div className="divide-y divide-border/50 rounded-xl border border-border">
-                  {personalGoals.map((goal) => (
-                    <div key={goal.id} className="grid gap-3 p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                      <div>
-                        <p className="font-semibold">{goal.name}</p>
-                        <p className="text-sm text-muted-foreground">{money(Number(goal.amount || 0))} · Fecha meta: {goal.target_date || 'Sin fecha'}</p>
+                <div className="grid gap-4 p-4 xl:grid-cols-2">
+                  {personalGoals.map((goal) => {
+                    const stats = buildSavingsGoalStats(goal);
+                    const statusClasses = goal.status === 'Completada' ? 'bg-success/10 text-success' : stats.status === 'atrasada' ? 'bg-destructive/10 text-destructive' : goal.status === 'Pausada' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary';
+                    return (
+                      <div key={goal.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold">{goal.name}</p>
+                              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClasses}`}>{goal.status || stats.statusLabel}</span>
+                              {goal.is_protected && <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">No tocar</span>}
+                            </div>
+                            <p className="mt-1 text-sm text-muted-foreground">{goal.goal_type} - Prioridad {goal.priority || 'Media'}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold">{money(Number(goal.current_amount || 0))}</p>
+                            <p className="text-xs text-muted-foreground">de {money(Number(goal.target_amount || 0))}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4 space-y-2">
+                          <div className="flex justify-between text-xs font-medium text-muted-foreground">
+                            <span>{stats.progress.toFixed(1)}% avanzado</span>
+                            <span>Falta {money(stats.missing)}</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full bg-primary" style={{ width: `${Math.min(100, stats.progress)}%` }} />
+                          </div>
+                        </div>
+                        <div className="mt-4 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                          <span>Fecha objetivo: <b>{goal.target_date || 'Sin fecha'}</b></span>
+                          <span>Tiempo: <b>{stats.timeLabel}</b></span>
+                          <span>Aporte semanal necesario: <b>{money(stats.weeklyNeeded)}</b></span>
+                          <span>Aporte mensual necesario: <b>{money(stats.monthlyNeeded)}</b></span>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Button variant="outline" size="sm" disabled={workingGoalId === goal.id || goal.status === 'Completada'} onClick={() => openGoalContributionModal(goal)}>Aportar</Button>
+                          <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => openGoalModal(goal)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
+                          <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => handleGoalStatus(goal, goal.status === 'Pausada' ? 'Activa' : 'Pausada')}>{goal.status === 'Pausada' ? 'Activar' : 'Pausar'}</Button>
+                          <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => handleGoalStatus(goal, 'Completada')}>Completar</Button>
+                          <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => handleDeleteGoal(goal.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 lg:justify-end">
-                        <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => openGoalModal(goal)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
-                        <Button variant="outline" size="sm" disabled={workingGoalId === goal.id} onClick={() => handleDeleteGoal(goal.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <EmptyState text="No hay metas de ahorro registradas todavia." />
+                <div className="space-y-4 p-8 text-center">
+                  <EmptyState text="No tienes metas de ahorro registradas todavia." />
+                  <p className="text-sm text-muted-foreground">Usa esta seccion para separar dinero que no debes tocar: emergencia, salud, deudas, viajes o reservas personales.</p>
+                  <Button onClick={() => openGoalModal()}><PiggyBank className="mr-2 h-4 w-4" /> Crear primera meta de ahorro</Button>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -1158,10 +1826,50 @@ export function PersonalBudgetModule() {
             <CardContent className="space-y-4 pt-5">
               <Field label="Nombre"><input className="form-field" value={debtForm.name} onChange={(event) => setDebtForm({ ...debtForm, name: event.target.value })} placeholder="Ej: tarjeta, prestamo, familiar" /></Field>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Tipo de deuda">
+                  <select className="form-field" value={debtForm.type} onChange={(event) => setDebtForm({ ...debtForm, type: event.target.value })}>
+                    <option>Tarjeta de credito</option>
+                    <option>Prestamo personal</option>
+                    <option>Deuda familiar</option>
+                    <option>Deuda informal</option>
+                    <option>Banco</option>
+                    <option>Proveedor</option>
+                    <option>Otro</option>
+                  </select>
+                </Field>
+                <Field label="Banco / categoria"><input className="form-field" value={debtForm.category} onChange={(event) => setDebtForm({ ...debtForm, category: event.target.value })} placeholder="Ej: BAC, familiar, salud" /></Field>
                 <Field label="Monto original"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.originalAmount} onChange={(event) => setDebtForm({ ...debtForm, originalAmount: event.target.value })} /></Field>
                 <Field label="Saldo actual"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.pending} onChange={(event) => setDebtForm({ ...debtForm, pending: event.target.value })} /></Field>
+                <Field label="Tasa de interes"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.interestRate} onChange={(event) => setDebtForm({ ...debtForm, interestRate: event.target.value })} placeholder="0.00" /></Field>
+                <Field label="Tipo de tasa">
+                  <select className="form-field" value={debtForm.interestRateType} onChange={(event) => setDebtForm({ ...debtForm, interestRateType: event.target.value })}>
+                    <option>Anual</option>
+                    <option>Mensual</option>
+                    <option>Sin interes</option>
+                  </select>
+                </Field>
                 <Field label="Pago minimo"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.minimum} onChange={(event) => setDebtForm({ ...debtForm, minimum: event.target.value })} /></Field>
-                <Field label="Fecha de pago"><input className="form-field" type="date" value={debtForm.dueDate} onChange={(event) => setDebtForm({ ...debtForm, dueDate: event.target.value })} /></Field>
+                <Field label="Pago recomendado"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.recommendedPayment} onChange={(event) => setDebtForm({ ...debtForm, recommendedPayment: event.target.value })} placeholder={debtForm.minimum || '0.00'} /></Field>
+                <Field label="Pago extra mensual"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.extraPayment} onChange={(event) => setDebtForm({ ...debtForm, extraPayment: event.target.value })} /></Field>
+                <Field label="Frecuencia de pago">
+                  <select className="form-field" value={debtForm.paymentFrequency} onChange={(event) => setDebtForm({ ...debtForm, paymentFrequency: event.target.value })}>
+                    <option>Semanal</option>
+                    <option>Quincenal</option>
+                    <option>Mensual</option>
+                    <option>Personalizado</option>
+                  </select>
+                </Field>
+                <Field label="Fecha de corte"><input className="form-field" type="date" value={debtForm.cutDate} onChange={(event) => setDebtForm({ ...debtForm, cutDate: event.target.value })} /></Field>
+                <Field label="Fecha limite de pago"><input className="form-field" type="date" value={debtForm.dueDate} onChange={(event) => setDebtForm({ ...debtForm, dueDate: event.target.value })} /></Field>
+                <Field label="Limite de credito"><input className="form-field" type="number" min="0" step="0.01" value={debtForm.creditLimit} onChange={(event) => setDebtForm({ ...debtForm, creditLimit: event.target.value })} /></Field>
+                <Field label="Estrategia">
+                  <select className="form-field" value={debtForm.strategy} onChange={(event) => setDebtForm({ ...debtForm, strategy: event.target.value })}>
+                    <option>Metodo avalancha</option>
+                    <option>Metodo bola de nieve</option>
+                    <option>Pago minimo</option>
+                    <option>Personalizado</option>
+                  </select>
+                </Field>
                 <Field label="Prioridad">
                   <select className="form-field" value={debtForm.priority} onChange={(event) => setDebtForm({ ...debtForm, priority: event.target.value })}>
                     <option>Alta</option>
@@ -1176,6 +1884,23 @@ export function PersonalBudgetModule() {
                     <option>Pagada</option>
                   </select>
                 </Field>
+              </div>
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                <p className="font-semibold">Vista previa del plan</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                  <MiniSummary label="Tiempo estimado" value={debtFormPlan.monthsToPayoff ? `${debtFormPlan.monthsToPayoff} meses` : 'Sin calcular'} />
+                  <MiniSummary label="Interes total" value={money(debtFormPlan.totalInterest)} />
+                  <MiniSummary label="Fecha final" value={debtFormPlan.payoffDate || 'Sin calcular'} />
+                </div>
+                {debtFormPlan.warningMessage && <div className="mt-3 rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-700">{debtFormPlan.warningMessage}</div>}
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {debtFormScenarios.slice(0, 4).map((scenario) => (
+                    <div key={scenario.label} className="rounded-lg border bg-background p-3 text-sm">
+                      <p className="font-medium">{scenario.label}: {money(scenario.payment)}</p>
+                      <p className="text-xs text-muted-foreground">{scenario.monthsToPayoff ? `${scenario.monthsToPayoff} meses` : 'Sin fecha'} - ahorro {money(scenario.interestSavings)}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
               <Field label="Nota"><input className="form-field" value={debtForm.notes} onChange={(event) => setDebtForm({ ...debtForm, notes: event.target.value })} placeholder="Opcional" /></Field>
               {debtError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{debtError}</div>}
@@ -1208,26 +1933,84 @@ export function PersonalBudgetModule() {
 
       {cardModalOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
-          <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
+          <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl overflow-y-auto border-border shadow-2xl">
             <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
               <div>
                 <CardTitle>{editingCardId ? 'Editar tarjeta personal' : 'Nueva tarjeta personal'}</CardTitle>
-                <CardDescription>Se guarda como cuenta personal tipo tarjeta.</CardDescription>
+                <CardDescription>Credito se maneja como deuda rotativa; debito y prepago se manejan como medio de pago.</CardDescription>
               </div>
               <button onClick={closeCardModal} className="rounded-xl p-1 text-muted-foreground hover:bg-muted"><X className="h-5 w-5" /></button>
             </CardHeader>
             <CardContent className="space-y-4 pt-5">
-              <Field label="Nombre"><input className="form-field" value={cardForm.name} onChange={(event) => setCardForm({ ...cardForm, name: event.target.value })} placeholder="Ej: Visa personal" /></Field>
-              <Field label="Banco / entidad"><input className="form-field" value={cardForm.bankName} onChange={(event) => setCardForm({ ...cardForm, bankName: event.target.value })} placeholder="Opcional" /></Field>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Saldo actual"><input className="form-field" type="number" step="0.01" value={cardForm.balance} onChange={(event) => setCardForm({ ...cardForm, balance: event.target.value })} /></Field>
-                <Field label="Estado">
-                  <select className="form-field" value={cardForm.status} onChange={(event) => setCardForm({ ...cardForm, status: event.target.value })}>
-                    <option value="active">Activa</option>
-                    <option value="paused">Pausada</option>
+                <Field label="Nombre"><input className="form-field" value={cardForm.name} onChange={(event) => setCardForm({ ...cardForm, name: event.target.value })} placeholder="Ej: Visa Banco General" /></Field>
+                <Field label="Banco / entidad"><input className="form-field" value={cardForm.bankName} onChange={(event) => setCardForm({ ...cardForm, bankName: event.target.value })} placeholder="Banco General" /></Field>
+                <Field label="Tipo de tarjeta">
+                  <select className="form-field" value={cardForm.cardType} onChange={(event) => setCardForm({ ...cardForm, cardType: event.target.value })}>
+                    <option>Credito</option>
+                    <option>Debito</option>
+                    <option>Prepago</option>
+                    <option>Otra</option>
                   </select>
                 </Field>
+                {!isCreditCardForm && (
+                  <Field label="Estado">
+                    <select className="form-field" value={cardForm.status} onChange={(event) => setCardForm({ ...cardForm, status: event.target.value })}>
+                      <option value="active">Activa</option>
+                      <option value="paused">Pausada</option>
+                    </select>
+                  </Field>
+                )}
               </div>
+
+              {isCreditCardForm ? (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field label="Limite de credito"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.creditLimit} onChange={(event) => setCardForm({ ...cardForm, creditLimit: event.target.value })} /></Field>
+                    <Field label="Saldo usado actual"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.balance} onChange={(event) => setCardForm({ ...cardForm, balance: event.target.value })} /></Field>
+                    <Field label="Fecha de corte"><input className="form-field" type="date" value={cardForm.cutDate} onChange={(event) => setCardForm({ ...cardForm, cutDate: event.target.value })} /></Field>
+                    <Field label="Fecha de pago"><input className="form-field" type="date" value={cardForm.paymentDueDate} onChange={(event) => setCardForm({ ...cardForm, paymentDueDate: event.target.value })} /></Field>
+                    <Field label="Pago minimo"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.minimumPayment} onChange={(event) => setCardForm({ ...cardForm, minimumPayment: event.target.value })} /></Field>
+                    <Field label="Pago recomendado"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.recommendedPayment || String(cardFormMetrics.recommended_payment || '')} onChange={(event) => setCardForm({ ...cardForm, recommendedPayment: event.target.value })} /></Field>
+                    <Field label="Tasa de interes anual"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.annualInterestRate} onChange={(event) => setCardForm({ ...cardForm, annualInterestRate: event.target.value })} placeholder="24" /></Field>
+                    <Field label="Cuenta desde donde pagas">
+                      <select className="form-field" value={cardForm.accountId} onChange={(event) => setCardForm({ ...cardForm, accountId: event.target.value })}>
+                        <option value="">Opcional</option>
+                        {personalAccounts.filter((account) => !account.type.toLowerCase().includes('tarjeta')).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <label className="flex items-center gap-3 rounded-xl border border-border p-3 text-sm">
+                    <input type="checkbox" checked={cardForm.createLinkedDebt} onChange={(event) => setCardForm({ ...cardForm, createLinkedDebt: event.target.checked })} />
+                    Crear tambien como deuda personal vinculada
+                  </label>
+                  <div className={`rounded-xl border p-4 ${getCardStatusClasses(cardFormMetrics.status)}`}>
+                    <p className="font-semibold">Vista previa</p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                      <MiniSummary label="Disponible" value={money(cardFormMetrics.available_credit)} />
+                      <MiniSummary label="Utilizacion" value={`${cardFormMetrics.credit_utilization.toFixed(1)}%`} />
+                      <MiniSummary label="Estado" value={cardFormMetrics.status} />
+                      <MiniSummary label="Bajar a 50%" value={money(Math.max(0, Number(cardForm.balance || 0) - Number(cardForm.creditLimit || 0) * 0.5))} />
+                      <MiniSummary label="Pago ideal 30%" value={money(cardFormMetrics.ideal_payment)} />
+                      <MiniSummary label="Interes mensual" value={money(cardFormMetrics.estimated_monthly_interest)} />
+                    </div>
+                    {cardFormMetrics.credit_utilization >= 80 && <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">Esta tarjeta esta en zona de peligro. Prioriza bajar el saldo.</div>}
+                    {!cardForm.annualInterestRate && <div className="mt-3 rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-700">Sin tasa de interes no se puede calcular el costo real de esta tarjeta.</div>}
+                  </div>
+                </>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Saldo actual"><input className="form-field" type="number" min="0" step="0.01" value={cardForm.balance} onChange={(event) => setCardForm({ ...cardForm, balance: event.target.value })} /></Field>
+                  <Field label="Cuenta asociada">
+                    <select className="form-field" value={cardForm.accountId} onChange={(event) => setCardForm({ ...cardForm, accountId: event.target.value })}>
+                      <option value="">Opcional</option>
+                      {personalAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                    </select>
+                  </Field>
+                </div>
+              )}
+
+              <Field label="Nota"><input className="form-field" value={cardForm.notes} onChange={(event) => setCardForm({ ...cardForm, notes: event.target.value })} placeholder="Opcional" /></Field>
               {cardError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{cardError}</div>}
             </CardContent>
             <CardFooter className="flex justify-end gap-2 border-t pt-4">
@@ -1238,26 +2021,115 @@ export function PersonalBudgetModule() {
         </div>
       )}
 
-      {showGoalModal && (
+      {payingCardId && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
-          <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-lg overflow-y-auto border-border shadow-2xl">
-            <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
-              <div>
-                <CardTitle>{editingGoalId ? 'Editar meta de ahorro' : 'Crear meta de ahorro'}</CardTitle>
-                <CardDescription>Se guardara como reserva personal protegida.</CardDescription>
-              </div>
-              <button onClick={resetGoalModal} className="rounded-xl p-1 text-muted-foreground hover:bg-muted"><X className="h-5 w-5" /></button>
+          <Card className="w-full max-w-md border-border shadow-2xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle>Abonar tarjeta</CardTitle>
+              <CardDescription>Registra el pago y reduce el saldo usado de la tarjeta.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 pt-5">
-              <Field label="Nombre"><input className="form-field" value={goalForm.name} onChange={(event) => setGoalForm({ ...goalForm, name: event.target.value })} /></Field>
-              <Field label="Monto meta"><input className="form-field" type="number" min="0" step="0.01" value={goalForm.amount} onChange={(event) => setGoalForm({ ...goalForm, amount: event.target.value })} /></Field>
-              <Field label="Fecha meta"><input className="form-field" type="date" value={goalForm.targetDate} onChange={(event) => setGoalForm({ ...goalForm, targetDate: event.target.value })} /></Field>
-              <Field label="Cuenta relacionada">
-                <select className="form-field" value={goalForm.accountId} onChange={(event) => setGoalForm({ ...goalForm, accountId: event.target.value })}>
+              <Field label="Monto del pago"><input className="form-field" type="number" min="0" step="0.01" value={cardPaymentForm.amount} onChange={(event) => setCardPaymentForm({ ...cardPaymentForm, amount: event.target.value })} /></Field>
+              <Field label="Fecha"><input className="form-field" type="date" value={cardPaymentForm.paymentDate} onChange={(event) => setCardPaymentForm({ ...cardPaymentForm, paymentDate: event.target.value })} /></Field>
+              <Field label="Metodo de pago">
+                <select className="form-field" value={cardPaymentForm.paymentMethod} onChange={(event) => setCardPaymentForm({ ...cardPaymentForm, paymentMethod: event.target.value })}>
+                  <option value="">Sin metodo</option>
+                  {paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}
+                </select>
+              </Field>
+              <Field label="Cuenta origen">
+                <select className="form-field" value={cardPaymentForm.accountId} onChange={(event) => setCardPaymentForm({ ...cardPaymentForm, accountId: event.target.value })}>
+                  <option value="">Opcional</option>
+                  {personalAccounts.filter((account) => !account.type.toLowerCase().includes('tarjeta')).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Nota"><input className="form-field" value={cardPaymentForm.notes} onChange={(event) => setCardPaymentForm({ ...cardPaymentForm, notes: event.target.value })} placeholder="Opcional" /></Field>
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={() => { setPayingCardId(null); setCardPaymentForm(initialCardPaymentForm); }}>Cancelar</Button>
+              <Button onClick={handleCardPayment} disabled={workingCardId === payingCardId}>{workingCardId === payingCardId ? 'Guardando...' : 'Guardar pago'}</Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
+
+      {contributingGoalId && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+          <Card className="w-full max-w-md border-border shadow-2xl">
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle>Aportar a meta</CardTitle>
+              <CardDescription>Registra un aporte y actualiza el avance de la meta.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-5">
+              <Field label="Monto del aporte"><input className="form-field" type="number" min="0" step="0.01" value={goalContributionForm.amount} onChange={(event) => setGoalContributionForm({ ...goalContributionForm, amount: event.target.value })} /></Field>
+              <Field label="Fecha"><input className="form-field" type="date" value={goalContributionForm.contributionDate} onChange={(event) => setGoalContributionForm({ ...goalContributionForm, contributionDate: event.target.value })} /></Field>
+              <Field label="Cuenta origen">
+                <select className="form-field" value={goalContributionForm.accountId} onChange={(event) => setGoalContributionForm({ ...goalContributionForm, accountId: event.target.value })}>
                   <option value="">Opcional</option>
                   {personalAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                 </select>
               </Field>
+              <Field label="Metodo">
+                <select className="form-field" value={goalContributionForm.paymentMethod} onChange={(event) => setGoalContributionForm({ ...goalContributionForm, paymentMethod: event.target.value })}>
+                  <option value="">Sin metodo</option>
+                  {paymentMethods.map((method) => <option key={method} value={method}>{method}</option>)}
+                </select>
+              </Field>
+              <Field label="Nota"><input className="form-field" value={goalContributionForm.notes} onChange={(event) => setGoalContributionForm({ ...goalContributionForm, notes: event.target.value })} placeholder="Opcional" /></Field>
+            </CardContent>
+            <CardFooter className="flex justify-end gap-2 border-t pt-4">
+              <Button variant="outline" onClick={() => { setContributingGoalId(null); setGoalContributionForm(initialGoalContributionForm); }}>Cancelar</Button>
+              <Button onClick={handleGoalContribution} disabled={workingGoalId === contributingGoalId}>{workingGoalId === contributingGoalId ? 'Guardando...' : 'Guardar aporte'}</Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
+
+      {showGoalModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:p-4">
+          <Card className="max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl overflow-y-auto border-border shadow-2xl">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-border pb-4">
+              <div>
+                <CardTitle>{editingGoalId ? 'Editar meta de ahorro' : 'Crear meta de ahorro'}</CardTitle>
+                <CardDescription>Define una meta personal y decide si ese dinero queda protegido como no tocar.</CardDescription>
+              </div>
+              <button onClick={resetGoalModal} className="rounded-xl p-1 text-muted-foreground hover:bg-muted"><X className="h-5 w-5" /></button>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-5">
+              <Field label="Nombre de la meta"><input className="form-field" value={goalForm.name} onChange={(event) => setGoalForm({ ...goalForm, name: event.target.value })} placeholder="Ej: Fondo de emergencia" /></Field>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label="Tipo de meta">
+                  <select className="form-field" value={goalForm.goalType} onChange={(event) => setGoalForm({ ...goalForm, goalType: event.target.value })}>
+                    {['Fondo de emergencia', 'Salud', 'Viaje', 'Compra importante', 'Pago de deuda', 'Inversion personal', 'Reserva personal', 'Impuestos / reserva', 'Otro'].map((type) => <option key={type}>{type}</option>)}
+                  </select>
+                </Field>
+                <Field label="Prioridad">
+                  <select className="form-field" value={goalForm.priority} onChange={(event) => setGoalForm({ ...goalForm, priority: event.target.value })}>
+                    <option>Alta</option><option>Media</option><option>Baja</option>
+                  </select>
+                </Field>
+                <Field label="Monto objetivo"><input className="form-field" type="number" min="0" step="0.01" value={goalForm.targetAmount} onChange={(event) => setGoalForm({ ...goalForm, targetAmount: event.target.value })} /></Field>
+                <Field label="Monto actual"><input className="form-field" type="number" min="0" step="0.01" value={goalForm.currentAmount} onChange={(event) => setGoalForm({ ...goalForm, currentAmount: event.target.value })} /></Field>
+                <Field label="Aporte semanal deseado"><input className="form-field" type="number" min="0" step="0.01" value={goalForm.weeklyContribution} onChange={(event) => setGoalForm({ ...goalForm, weeklyContribution: event.target.value })} /></Field>
+                <Field label="Aporte mensual deseado"><input className="form-field" type="number" min="0" step="0.01" value={goalForm.monthlyContribution} onChange={(event) => setGoalForm({ ...goalForm, monthlyContribution: event.target.value })} /></Field>
+                <Field label="Fecha objetivo"><input className="form-field" type="date" value={goalForm.targetDate} onChange={(event) => setGoalForm({ ...goalForm, targetDate: event.target.value })} /></Field>
+                <Field label="Estado">
+                  <select className="form-field" value={goalForm.status} onChange={(event) => setGoalForm({ ...goalForm, status: event.target.value })}>
+                    <option>Activa</option><option>Pausada</option><option>Completada</option>
+                  </select>
+                </Field>
+                <Field label="Cuenta o bolsillo asociado">
+                  <select className="form-field" value={goalForm.accountId} onChange={(event) => setGoalForm({ ...goalForm, accountId: event.target.value })}>
+                    <option value="">Opcional</option>
+                    {personalAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <label className="flex items-center gap-3 rounded-xl border border-border p-3 text-sm">
+                <input type="checkbox" checked={goalForm.isProtected} onChange={(event) => setGoalForm({ ...goalForm, isProtected: event.target.checked })} />
+                Marcar como dinero no tocar
+              </label>
+              <Field label="Nota"><input className="form-field" value={goalForm.notes} onChange={(event) => setGoalForm({ ...goalForm, notes: event.target.value })} placeholder="Opcional" /></Field>
               {goalError && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{goalError}</div>}
             </CardContent>
             <CardFooter className="flex justify-end gap-2 border-t pt-4">
@@ -1275,6 +2147,68 @@ function isCurrentMonth(dateValue: string) {
   const date = new Date(dateValue);
   const now = new Date();
   return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+}
+
+function isCurrentWeek(dateValue: string) {
+  const date = parseLocalDate(dateValue);
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(now.getDate() - now.getDay());
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return date >= start && date < end;
+}
+
+function isPersonalVariableExpense(transaction: Transaction) {
+  const text = `${transaction.category || ''} ${transaction.notes || ''} ${transaction.status || ''}`.toLowerCase();
+  if (transaction.recurring_expense_id) return false;
+  const blocked = ['gasto fijo', 'recurrente', 'deuda', 'abono', 'tarjeta', 'ahorro', 'reserva', 'dinero no tocar', 'meta', 'fondo de emergencia'];
+  return !blocked.some((word) => text.includes(word));
+}
+
+function parseBudgetNumber(value: string, fallback = 0) {
+  if (value === '') return fallback;
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function buildBudgetDecision(input: { configured: boolean; availableMonth: number; weeklyAvailable: number; usedPercent: number }) {
+  if (!input.configured) return 'Configura tu gasto libre mensual para que pueda decirte cuanto puedes gastar esta semana.';
+  if (input.availableMonth < 0) return `Te pasaste por ${money(Math.abs(input.availableMonth))}. No retires mas dinero de los negocios hasta compensarlo.`;
+  if (input.usedPercent >= 80) return `Cuidado. Ya usaste el ${input.usedPercent.toFixed(1)}% de tu presupuesto personal del mes.`;
+  return `Vas bien. Te quedan ${money(input.availableMonth)} para gastar este mes y ${money(Math.max(0, input.weeklyAvailable))} para esta semana.`;
+}
+
+function buildSavingsGoalStats(goal: SavingsGoal) {
+  const target = Number(goal.target_amount || 0);
+  const current = Number(goal.current_amount || 0);
+  const missing = Math.max(0, target - current);
+  const progress = target > 0 ? Math.min(100, (current / target) * 100) : 0;
+  if (missing <= 0 || goal.status === 'Completada') {
+    return { progress: 100, missing: 0, weeksLeft: 0, monthsLeft: 0, weeklyNeeded: 0, monthlyNeeded: 0, status: 'completada', statusLabel: 'Completada', timeLabel: 'Completada' };
+  }
+  if (!goal.target_date) {
+    return { progress, missing, weeksLeft: 0, monthsLeft: 0, weeklyNeeded: Number(goal.weekly_contribution_target || 0), monthlyNeeded: Number(goal.monthly_contribution_target || 0), status: 'sin fecha', statusLabel: 'Sin fecha', timeLabel: 'Sin fecha' };
+  }
+  const daysLeft = diffDays(goal.target_date, today);
+  const weeksLeft = Math.max(0, Math.ceil(daysLeft / 7));
+  const monthsLeft = Math.max(0, Math.ceil(daysLeft / 30));
+  const weeklyNeeded = weeksLeft > 0 ? missing / weeksLeft : missing;
+  const monthlyNeeded = monthsLeft > 0 ? missing / monthsLeft : missing;
+  const plannedMonthly = Number(goal.monthly_contribution_target || 0);
+  const status = daysLeft < 0 ? 'atrasada' : plannedMonthly > 0 && plannedMonthly < monthlyNeeded ? 'atrasada' : 'en camino';
+  return {
+    progress,
+    missing,
+    weeksLeft,
+    monthsLeft,
+    weeklyNeeded,
+    monthlyNeeded,
+    status,
+    statusLabel: status === 'atrasada' ? 'Atrasada' : 'En camino',
+    timeLabel: daysLeft < 0 ? `Vencio hace ${Math.abs(daysLeft)} dias` : `${weeksLeft} semanas / ${monthsLeft} meses`,
+  };
 }
 
 function isWithinDays(dateValue: string | undefined, days: number) {
@@ -1346,6 +2280,58 @@ function MiniSummary({ label, value, detail }: { label: string; value: string; d
       </CardContent>
     </Card>
   );
+}
+
+function buildCardKpis(cards: StoredCreditCard[]) {
+  const used = cards.reduce((sum, card) => sum + Number(card.current_balance || 0), 0);
+  const limit = cards.reduce((sum, card) => sum + Number(card.credit_limit || 0), 0);
+  const available = Math.max(0, limit - used);
+  const minimum = cards.reduce((sum, card) => sum + Number(card.minimum_payment || 0), 0);
+  const recommended = cards.reduce((sum, card) => {
+    const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+    return sum + Number(card.recommended_payment || metrics.recommended_payment || 0);
+  }, 0);
+  const nextPayment = [...cards]
+    .filter((card) => card.payment_due_date)
+    .sort((a, b) => String(a.payment_due_date).localeCompare(String(b.payment_due_date)))[0];
+  return {
+    used,
+    limit,
+    available,
+    averageUtilization: limit > 0 ? (used / limit) * 100 : 0,
+    nextPayment,
+    minimum,
+    recommended,
+    danger: cards.filter((card) => calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance }).status === 'Peligro').length,
+  };
+}
+
+function groupCardPayments(cards: StoredCreditCard[]) {
+  const todayDate = parseLocalDate(today);
+  const groups = [
+    ['overdue', 'Vencidos'],
+    ['today', 'Vencen hoy'],
+    ['week', 'Esta semana'],
+    ['next15', 'Proximos 15 dias'],
+  ] as const;
+  const items = cards
+    .filter((card) => card.card_type === 'Credito' && card.payment_due_date && Number(card.current_balance || 0) > 0)
+    .map((card) => ({ card, diff: diffDays(card.payment_due_date || today, formatDateKey(todayDate)) }));
+
+  return groups
+    .map(([id, label]) => ({
+      id,
+      label,
+      items: items
+        .filter(({ diff }) => {
+          if (id === 'overdue') return diff < 0;
+          if (id === 'today') return diff === 0;
+          if (id === 'week') return diff > 0 && diff <= 7;
+          return diff > 7 && diff <= 15;
+        })
+        .map(({ card }) => card),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 type PaymentOccurrence = {
@@ -1508,7 +2494,7 @@ function PaymentRow({ item, working, onPay, onPostpone, onEdit, onSkip }: { item
           <span className="rounded-full bg-background px-2 py-0.5 text-xs font-medium text-muted-foreground">{item.status}</span>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          {money(item.amount)} · {item.expense.category || 'Otros'} · {item.expense.payment_method || 'Sin metodo'} · {item.dueDate}
+          {money(item.amount)} - {item.expense.category || 'Otros'} - {item.expense.payment_method || 'Sin metodo'} - {item.dueDate}
         </p>
         <p className="text-xs font-medium text-muted-foreground">{item.relative}</p>
       </div>
