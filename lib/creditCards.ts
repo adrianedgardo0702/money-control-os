@@ -59,6 +59,7 @@ export function calculateRecommendedPayment(balance: number, limit: number, util
 
 export function calculateIdealPayment(balance: number, limit: number, utilization: number) {
   if (limit <= 0 || balance <= 0 || utilization < 30) return 0;
+  if (utilization >= 80) return roundMoney(Math.max(0, balance - limit * 0.5));
   return roundMoney(Math.max(0, balance - limit * 0.3));
 }
 

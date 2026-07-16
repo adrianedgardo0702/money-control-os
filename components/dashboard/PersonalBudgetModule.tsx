@@ -24,6 +24,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { TransactionModal } from './TransactionModal';
 import { TransferModal } from './TransferModal';
 import { buildSchedulePayload, defaultScheduleForm, RecurringScheduleFields, scheduleFormFromExpense } from './RecurringScheduleFields';
@@ -249,6 +250,8 @@ export function PersonalBudgetModule() {
   const creditPersonalCards = personalCards.filter((card) => card.card_type === 'Credito');
   const cardKpis = buildCardKpis(creditPersonalCards);
   const cardPaymentGroups = groupCardPayments(creditPersonalCards);
+  const cardAnalytics = buildCardAnalytics(creditPersonalCards);
+  const cardInsight = buildCardInsight(creditPersonalCards);
   const businessAccounts = accounts.filter((account) => !account.is_personal);
   const personalTransactions = transactions.filter((transaction) => transaction.scope === 'personal');
   const monthlyExpenses = personalTransactions.filter((transaction) => transaction.type === 'gasto' && isCurrentMonth(transaction.date)).reduce((sum, transaction) => sum + Number(transaction.amount), 0);
@@ -1360,105 +1363,91 @@ export function PersonalBudgetModule() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <h3 className="text-xl font-display font-semibold">Tarjetas personales</h3>
-              <p className="text-sm text-muted-foreground">Controla tarjetas de credito, debito y prepago dentro de Finanzas Personales.</p>
+              <p className="text-sm text-muted-foreground">Dashboard visual para entender deuda, limite, pagos proximos y prioridad de ataque.</p>
             </div>
-            <Button onClick={() => openCardModal()}><Plus className="mr-2 h-4 w-4" /> Nueva tarjeta personal</Button>
+            <Button onClick={() => openCardModal()} className="w-full md:w-auto"><Plus className="mr-2 h-4 w-4" /> Nueva tarjeta personal</Button>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-8">
-            <MiniSummary label="Usado en credito" value={money(cardKpis.used)} />
-            <MiniSummary label="Limite total" value={money(cardKpis.limit)} />
-            <MiniSummary label="Disponible" value={money(cardKpis.available)} />
-            <MiniSummary label="Utilizacion prom." value={`${cardKpis.averageUtilization.toFixed(1)}%`} />
-            <MiniSummary label="Proximo pago" value={cardKpis.nextPayment?.payment_due_date || 'Sin fecha'} detail={cardKpis.nextPayment?.name} />
-            <MiniSummary label="Pago minimo total" value={money(cardKpis.minimum)} />
-            <MiniSummary label="Pago recomendado" value={money(cardKpis.recommended)} detail={`${creditCardPayments.length} pagos guardados`} />
-            <MiniSummary label="En peligro" value={String(cardKpis.danger)} />
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+            <CardKpi label="Deuda total" value={money(cardKpis.used)} tone="danger" detail={`${creditPersonalCards.length} tarjetas de credito`} />
+            <CardKpi label="Utilizacion promedio" value={`${cardKpis.averageUtilization.toFixed(1)}%`} tone={cardKpis.averageUtilization >= 80 ? 'danger' : cardKpis.averageUtilization >= 50 ? 'warning' : cardKpis.averageUtilization >= 30 ? 'caution' : 'success'} detail="Usado / limite total" />
+            <CardKpi label="Pagos esta semana" value={money(cardKpis.weeklyPayments)} tone="primary" detail="Minimo o recomendado" />
+            <CardKpi label="Disponible total" value={money(cardKpis.available)} tone="success" detail={cardKpis.limit > 0 ? `${money(cardKpis.limit)} de limite` : 'Sin limite registrado'} />
+            <CardKpi label="Pago minimo total" value={money(cardKpis.minimum)} tone="neutral" />
+            <CardKpi label="Pago recomendado" value={money(cardKpis.recommended)} tone="primary" detail={`${creditCardPayments.length} pagos guardados`} />
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Proximos pagos de tarjetas</CardTitle>
-              <CardDescription>Pagos agrupados por urgencia segun fecha de pago.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {cardPaymentGroups.length > 0 ? cardPaymentGroups.map((group) => (
-                <div key={group.id} className="space-y-2">
-                  <p className="text-sm font-semibold text-muted-foreground">{group.label}</p>
-                  {group.items.map((card) => (
-                    <div key={`${group.id}-${card.id}`} className="grid gap-3 rounded-xl border border-border p-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                      <div>
-                        <p className="font-semibold">{card.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {card.bank || 'Sin banco'} - Minimo: {money(Number(card.minimum_payment || 0))} - Recomendado: {money(Number(card.recommended_payment || 0))} - Pago: {card.payment_due_date}
-                        </p>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={() => openCardPaymentModal(card)} disabled={workingCardId === card.id}>Abonar / Pagar</Button>
-                    </div>
-                  ))}
-                </div>
-              )) : (
-                <EmptyState text="No hay pagos de tarjetas programados." />
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-0">
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
+            <div className="space-y-5">
               {personalCards.length > 0 ? (
-                <div className="divide-y divide-border/50">
+                <div className="space-y-3">
                   {personalCards.map((card) => {
                     const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
                     const isCredit = card.card_type === 'Credito';
                     const status = isCredit ? metrics.status : card.status || 'Activa';
                     const statusClasses = isCredit ? getCardStatusClasses(status) : 'border-blue-300 bg-blue-50 text-blue-700';
                     const isExpanded = expandedCardId === card.id;
+                    const recommended = Math.max(Number(card.minimum_payment || 0), Number(card.recommended_payment || metrics.recommended_payment || 0));
                     return (
-                      <div key={card.id} className="p-4">
-                        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-                          <div className="space-y-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="rounded-xl bg-primary/10 p-2 text-primary"><CreditCard className="h-5 w-5" /></div>
-                              <div>
-                                <p className="font-semibold">{card.name}</p>
+                      <div key={card.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+                          <div className="min-w-0 space-y-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div className={`rounded-xl p-2 ${isCredit ? 'bg-primary/10 text-primary' : 'bg-blue-50 text-blue-700'}`}><CreditCard className="h-5 w-5" /></div>
+                              <div className="min-w-0">
+                                <p className="truncate font-semibold">{card.name}</p>
                                 <p className="text-sm text-muted-foreground">{card.bank || 'Sin banco'} - {card.card_type}</p>
                               </div>
                               <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${statusClasses}`}>{status}</span>
+                              {card.debt_id && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Vinculada a deuda</span>}
                             </div>
+
                             {isCredit ? (
-                              <div className="space-y-2">
-                                <div className="grid gap-2 text-sm sm:grid-cols-4">
-                                  <span>Limite: <b>{money(Number(card.credit_limit || 0))}</b></span>
-                                  <span>Usado: <b>{money(Number(card.current_balance || 0))}</b></span>
-                                  <span>Disponible: <b>{money(metrics.available_credit)}</b></span>
-                                  <span>Uso: <b>{metrics.credit_utilization.toFixed(1)}%</b></span>
+                              <div className="space-y-3">
+                                <div className="grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                                  <MetricPill label="Limite" value={money(Number(card.credit_limit || 0))} />
+                                  <MetricPill label="Usado" value={money(Number(card.current_balance || 0))} />
+                                  <MetricPill label="Disponible" value={money(metrics.available_credit)} />
+                                  <MetricPill label="Utilizacion" value={`${metrics.credit_utilization.toFixed(1)}%`} />
                                 </div>
-                                <div className="h-2 overflow-hidden rounded-full bg-muted">
-                                  <div className={`h-full ${status === 'Peligro' ? 'bg-red-500' : status === 'Alto uso' ? 'bg-orange-500' : status === 'Cuidado' ? 'bg-yellow-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, metrics.credit_utilization)}%` }} />
+                                <div>
+                                  <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                                    <span>Barra de utilizacion</span>
+                                    <span>{metrics.credit_utilization.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="h-3 overflow-hidden rounded-full bg-muted">
+                                    <div className={`h-full ${cardRiskBar(status)}`} style={{ width: `${Math.min(100, metrics.credit_utilization)}%` }} />
+                                  </div>
                                 </div>
-                                <p className="text-xs text-muted-foreground">
-                                  Corte: {card.cut_date || 'Sin fecha'} - Pago: {card.payment_due_date || 'Sin fecha'} - Minimo: {money(Number(card.minimum_payment || 0))} - Recomendado: {money(Number(card.recommended_payment || metrics.recommended_payment || 0))}
-                                </p>
+                                <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+                                  <span>Proximo pago: <b className="text-foreground">{card.payment_due_date || 'Sin fecha'}</b></span>
+                                  <span>Dias restantes: <b className="text-foreground">{card.payment_due_date ? relativeDueText(diffDays(card.payment_due_date, today)) : 'Sin fecha'}</b></span>
+                                  <span>Pago minimo: <b className="text-foreground">{money(Number(card.minimum_payment || 0))}</b></span>
+                                  <span>Recomendado: <b className="text-foreground">{money(recommended)}</b></span>
+                                </div>
                               </div>
                             ) : (
-                              <p className="text-sm text-muted-foreground">Saldo actual: {money(Number(card.current_balance || 0))} - Cuenta asociada: {card.account_id || 'Sin cuenta'}</p>
+                              <p className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-700">
+                                Saldo actual: <b>{money(Number(card.current_balance || 0))}</b>. Esta tarjeta funciona como medio de pago, no como deuda rotativa.
+                              </p>
                             )}
                           </div>
                           <div className="flex flex-wrap gap-2 lg:justify-end">
-                            {isCredit && <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardPaymentModal(card)}>Abonar</Button>}
-                            {isCredit && <Button variant="outline" size="sm" onClick={() => setExpandedCardId(isExpanded ? null : card.id)}>Ver plan</Button>}
-                            {isCredit && <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardPaymentModal(card)}>Marcar pago</Button>}
+                            {isCredit && <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardPaymentModal(card)}>Pagar</Button>}
+                            {isCredit && <Button variant="outline" size="sm" onClick={() => setExpandedCardId(isExpanded ? null : card.id)}>Ver</Button>}
                             <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => openCardModal(card)}><Pencil className="mr-1.5 h-3.5 w-3.5" /> Editar</Button>
                             <Button variant="outline" size="sm" disabled={workingCardId === card.id} onClick={() => handleDeleteCard(card.id)} className="text-destructive hover:text-destructive"><Trash2 className="mr-1.5 h-3.5 w-3.5" /> Eliminar</Button>
                           </div>
                         </div>
                         {isExpanded && isCredit && (
                           <div className="mt-4 grid gap-3 rounded-xl border border-border bg-muted/20 p-4 md:grid-cols-4">
-                            <MiniSummary label="Bajar a 50%" value={money(Math.max(0, Number(card.current_balance || 0) - Number(card.credit_limit || 0) * 0.5))} />
-                            <MiniSummary label="Bajar a 30%" value={money(metrics.ideal_payment)} />
+                            <MiniSummary label="Pago para bajar a 70%" value={money(Math.max(0, Number(card.current_balance || 0) - Number(card.credit_limit || 0) * 0.7))} />
+                            <MiniSummary label="Pago para bajar a 50%" value={money(Math.max(0, Number(card.current_balance || 0) - Number(card.credit_limit || 0) * 0.5))} />
+                            <MiniSummary label="Pago ideal" value={money(metrics.ideal_payment)} detail="Segun nivel de uso" />
                             <MiniSummary label="Interes mensual est." value={money(metrics.estimated_monthly_interest)} />
-                            <MiniSummary label="Deuda vinculada" value={card.debt_id ? 'Si' : 'No'} />
-                            {metrics.credit_utilization >= 80 && <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700 md:col-span-4">Esta tarjeta esta en zona de peligro. Prioriza bajar el saldo.</div>}
+                            <div className={`rounded-lg border p-3 text-sm md:col-span-4 ${statusClasses}`}>
+                              Prioridad {getCardPriority(metrics.status)}. {buildSingleCardAdvice(card)}
+                            </div>
                             {!card.annual_interest_rate && <div className="rounded-lg border border-orange-300 bg-orange-50 p-3 text-sm text-orange-700 md:col-span-4">Sin tasa de interes no se puede calcular el costo real de esta tarjeta.</div>}
                           </div>
                         )}
@@ -1467,13 +1456,18 @@ export function PersonalBudgetModule() {
                   })}
                 </div>
               ) : (
-                <div className="p-8 text-center">
+                <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
                   <EmptyState text="No tienes tarjetas personales registradas todavia." />
                   <Button onClick={() => openCardModal()} className="mt-4"><Plus className="mr-2 h-4 w-4" /> Crear primera tarjeta personal</Button>
                 </div>
               )}
-            </CardContent>
-          </Card>
+
+              <CardPaymentsPanel groups={cardPaymentGroups} workingCardId={workingCardId} onPay={openCardPaymentModal} />
+              <CardInsightPanel insight={cardInsight} />
+            </div>
+
+            <CardAnalyticsPanel analytics={cardAnalytics} averageUtilization={cardKpis.averageUtilization} />
+          </div>
         </section>
       )}
 
@@ -2294,6 +2288,12 @@ function buildCardKpis(cards: StoredCreditCard[]) {
   const nextPayment = [...cards]
     .filter((card) => card.payment_due_date)
     .sort((a, b) => String(a.payment_due_date).localeCompare(String(b.payment_due_date)))[0];
+  const weeklyPayments = cards
+    .filter((card) => card.payment_due_date && isWithinDays(card.payment_due_date, 7))
+    .reduce((sum, card) => {
+      const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+      return sum + Math.max(Number(card.minimum_payment || 0), Number(card.recommended_payment || metrics.recommended_payment || 0));
+    }, 0);
   return {
     used,
     limit,
@@ -2302,6 +2302,7 @@ function buildCardKpis(cards: StoredCreditCard[]) {
     nextPayment,
     minimum,
     recommended,
+    weeklyPayments,
     danger: cards.filter((card) => calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance }).status === 'Peligro').length,
   };
 }
@@ -2332,6 +2333,239 @@ function groupCardPayments(cards: StoredCreditCard[]) {
         .map(({ card }) => card),
     }))
     .filter((group) => group.items.length > 0);
+}
+
+function buildCardAnalytics(cards: StoredCreditCard[]) {
+  const colors = ['#4f46e5', '#ef4444', '#f97316', '#eab308', '#10b981', '#0ea5e9'];
+  const utilization = cards.map((card, index) => {
+    const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+    return {
+      name: card.name,
+      value: Number(metrics.credit_utilization.toFixed(1)),
+      color: colors[index % colors.length],
+      status: metrics.status,
+    };
+  });
+  const debt = cards.map((card) => ({
+    name: shortCardName(card.name),
+    value: Number(card.current_balance || 0),
+  }));
+  return { utilization, debt };
+}
+
+function buildCardInsight(cards: StoredCreditCard[]) {
+  if (cards.length === 0) {
+    return {
+      tone: 'neutral' as const,
+      title: 'Insight recomendado',
+      message: 'Crea tu primera tarjeta personal para que Noa calcule utilizacion, pagos proximos y prioridad de ataque.',
+    };
+  }
+  const ranked = [...cards]
+    .map((card) => ({
+      card,
+      metrics: calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate }),
+    }))
+    .sort((a, b) => b.metrics.credit_utilization - a.metrics.credit_utilization);
+  const top = ranked[0];
+  if (top.metrics.credit_utilization >= 80) {
+    return {
+      tone: 'danger' as const,
+      title: 'Insight recomendado',
+      message: `${top.card.name} esta en zona de peligro (${top.metrics.credit_utilization.toFixed(1)}%). Prioriza bajarla por debajo del 50% para mejorar tu salud financiera.`,
+    };
+  }
+  if (top.metrics.credit_utilization >= 50) {
+    return {
+      tone: 'warning' as const,
+      title: 'Insight recomendado',
+      message: `${top.card.name} esta en alto uso. El primer objetivo debe ser bajarla a 50% antes de usar mas credito.`,
+    };
+  }
+  if (top.metrics.credit_utilization >= 30) {
+    return {
+      tone: 'caution' as const,
+      title: 'Insight recomendado',
+      message: `${top.card.name} esta en zona de cuidado. Baja la utilizacion a 30% para mantener margen seguro.`,
+    };
+  }
+  return {
+    tone: 'success' as const,
+    title: 'Insight recomendado',
+    message: 'Tus tarjetas estan en buen rango. Manten la utilizacion por debajo del 30%.',
+  };
+}
+
+function buildSingleCardAdvice(card: StoredCreditCard) {
+  const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+  if (metrics.credit_utilization >= 80) return 'Esta tarjeta esta en zona de peligro. Atacala primero y busca bajarla por debajo de 50%.';
+  if (metrics.credit_utilization >= 50) return 'Esta tarjeta esta en alto uso. El primer objetivo debe ser bajarla a 50%.';
+  if (metrics.credit_utilization >= 30) return 'Esta tarjeta necesita cuidado. Baja el uso hacia 30% antes de seguir consumiendo.';
+  return 'Esta tarjeta esta saludable. Mantenla por debajo de 30%.';
+}
+
+function cardRiskBar(status: string) {
+  if (status === 'Peligro') return 'bg-red-500';
+  if (status === 'Alto uso') return 'bg-orange-500';
+  if (status === 'Cuidado') return 'bg-yellow-500';
+  return 'bg-emerald-500';
+}
+
+function shortCardName(name: string) {
+  return name.length > 16 ? `${name.slice(0, 15)}...` : name;
+}
+
+function CardKpi({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone: 'success' | 'caution' | 'warning' | 'danger' | 'primary' | 'neutral' }) {
+  const tones = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    caution: 'border-yellow-200 bg-yellow-50 text-yellow-700',
+    warning: 'border-orange-200 bg-orange-50 text-orange-700',
+    danger: 'border-red-200 bg-red-50 text-red-700',
+    primary: 'border-primary/20 bg-primary/5 text-primary',
+    neutral: 'border-border bg-card text-foreground',
+  };
+  return (
+    <div className={`rounded-xl border p-4 shadow-sm ${tones[tone]}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{label}</p>
+      <p className="mt-2 text-xl font-bold">{value}</p>
+      {detail && <p className="mt-1 text-xs opacity-80">{detail}</p>}
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function CardAnalyticsPanel({ analytics, averageUtilization }: { analytics: ReturnType<typeof buildCardAnalytics>; averageUtilization: number }) {
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>Analiticas de tarjetas</CardTitle>
+          <CardDescription>Utilizacion y deuda por tarjeta con datos reales.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {analytics.utilization.length > 0 ? (
+            <>
+              <div className="relative h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={analytics.utilization} dataKey="value" nameKey="name" innerRadius={58} outerRadius={86} paddingAngle={3}>
+                      {analytics.utilization.map((entry) => <Cell key={entry.name} fill={entry.color} />)}
+                    </Pie>
+                    <Tooltip formatter={(value) => `${Number(value).toFixed(1)}%`} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Promedio</p>
+                    <p className="text-2xl font-bold">{averageUtilization.toFixed(1)}%</p>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {analytics.utilization.map((item) => (
+                  <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="flex min-w-0 items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} /><span className="truncate">{item.name}</span></span>
+                    <span className="font-semibold">{item.value.toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <EmptyState text="No hay tarjetas de credito para graficar." />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Deuda por tarjeta</CardTitle>
+          <CardDescription>Saldo usado en cada tarjeta de credito.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {analytics.debt.length > 0 ? (
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analytics.debt} margin={{ top: 10, right: 10, left: -18, bottom: 0 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tickFormatter={(value) => `$${value}`} tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(value) => money(Number(value))} />
+                  <Bar dataKey="value" fill="#4f46e5" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <EmptyState text="No hay saldos de tarjetas para graficar." />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function CardPaymentsPanel({ groups, workingCardId, onPay }: { groups: ReturnType<typeof groupCardPayments>; workingCardId: string | null; onPay: (card: StoredCreditCard) => void }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Proximos pagos</CardTitle>
+        <CardDescription>Pagos minimos y recomendados segun fecha registrada.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {groups.length > 0 ? groups.map((group) => (
+          <div key={group.id} className="space-y-2">
+            <p className="text-sm font-semibold text-muted-foreground">{group.label}</p>
+            {group.items.map((card) => {
+              const metrics = calculateCreditCardMetrics({ credit_limit: card.credit_limit, current_balance: card.current_balance, annual_interest_rate: card.annual_interest_rate });
+              const recommended = Math.max(Number(card.minimum_payment || 0), Number(card.recommended_payment || metrics.recommended_payment || 0));
+              const days = card.payment_due_date ? diffDays(card.payment_due_date, today) : null;
+              return (
+                <div key={`${group.id}-${card.id}`} className="grid gap-3 rounded-xl border border-border p-4 lg:grid-cols-[1fr_auto] lg:items-center">
+                  <div>
+                    <p className="font-semibold">{card.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {card.payment_due_date || 'Sin fecha'} - Minimo: {money(Number(card.minimum_payment || 0))} - Recomendado: {money(recommended)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{days === null ? 'Sin dias calculados' : relativeDueText(days)}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => onPay(card)} disabled={workingCardId === card.id}>Pagar</Button>
+                </div>
+              );
+            })}
+          </div>
+        )) : (
+          <EmptyState text="No hay pagos de tarjetas programados." />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CardInsightPanel({ insight }: { insight: ReturnType<typeof buildCardInsight> }) {
+  const tones = {
+    success: 'border-emerald-300 bg-emerald-50 text-emerald-800',
+    caution: 'border-yellow-300 bg-yellow-50 text-yellow-800',
+    warning: 'border-orange-300 bg-orange-50 text-orange-800',
+    danger: 'border-red-300 bg-red-50 text-red-800',
+    neutral: 'border-primary/20 bg-primary/5 text-foreground',
+  };
+  return (
+    <Card className={tones[insight.tone]}>
+      <CardContent className="flex gap-3 p-5">
+        <Zap className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <h4 className="font-semibold">{insight.title}</h4>
+          <p className="mt-1 text-sm leading-6">{insight.message}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 type PaymentOccurrence = {
